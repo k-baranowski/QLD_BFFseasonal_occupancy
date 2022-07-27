@@ -9,7 +9,7 @@ library(tidyverse) #tidying
 library(ggplot2) #viz
 library(stringr) #viz
 library(scales)#viz
-#library(raster)
+library(raster)
 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
 ######## ######### ######### PURPOSE OF ANALYSIS ######## ######### ######### ######## ######## 
@@ -41,14 +41,15 @@ sum(is.na(all_ff_gpspts$dt_aest))  #0
 
 #turn time column into posixc format
 all_ff_gpspts$time<- as.POSIXct(all_ff_gpspts$dt_aest, format = "%m/%d/%Y  %H:%M:%S", tz = "GMT" ) 
-sum(is.na(all_ff_gpspts$time)) 
+sum(is.na(all_ff_gpspts$time)) #0 check
 
 #order the observations by batID night and time 
 all_ff_gpspts<-all_ff_gpspts[(order( all_ff_gpspts$night_ID, all_ff_gpspts$time)),]
 
-#clean out columns she calculated and old dt_aest column
+#clean out columns previously calculated 
 ff_gps_cl<-all_ff_gpspts[,-c(5,7,8,10,15,16,19:23,26:32)]
-#move my time column to beginning of df with lat/long next to it 
+
+#move my time column from the end to beginning of df with lat/long next to it 
 ff_gps_cl <- ff_gps_cl %>% relocate(time, .before = timeLag)
 
 head(ff_gps_cl)
@@ -84,106 +85,155 @@ colnames(ff_albers)[17]<- "y.albers"
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
 ######## ######### ######### BAT MOVEMENT/ TIME - DISTANCE ANALYSIS ######## ######### ######### 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
-#testing the distance calculations if you use lat long, want to see how far off dist is once you account for Aus crazy projection
-#convert albers df to an sf object so I can do distance by group in next part (struggled to get other examples of calc. dist by group to work for some reason )
-# ff_sf_test<- st_as_sf(
-#   ff_gps_cl, 
-#   coords = c('long', 'lat'),
-#   crs = "+init=epsg:4326"
-# )
-# 
-# ff_sf_test<- ff_sf_test%>%
-#   group_by(night_ID) %>%
-#   mutate(
-#     lead = geometry[row_number() + 1],
-#     dist = st_distance(geometry, lead, by_element = T))
-# ff_sf_test$dist<-as.numeric(ff_sf_test$dist)
-
 
 #convert albers df to an sf object so I can do distance by group in next part (struggled to get other examples of calc. dist by group to work for some reason )
+#more stackoverflow times shows this is most suggested for efficiency so keeping it 
 ff_albers_sf<- st_as_sf(
   ff_albers, 
   coords = c('x.albers', 'y.albers'),
-  crs = "+init=epsg:3577"
-)
+  crs = "+init=epsg:3577")
 
 class(ff_albers_sf) #sf obj check 
 
-#calculate pairwise distance for every bat night. last obs. is left  NA, so value must be assigned to 1st pt in df
+#calculate pairwise distance for every bat night. last obs. is left  NA, so value is assigned to 1st coord pt in df
 ff_albers_sf<- ff_albers_sf%>%
   group_by(night_ID) %>%
   mutate(
     lead = geometry[row_number() + 1],
-    dist = st_distance(geometry, lead, by_element = T))
-ff_albers_sf$dist<-as.numeric(ff_albers_sf$dist)
+    dist_btwn_pts_m = st_distance(geometry, lead, by_element = T))
+ff_albers_sf$dist_btwn_pts_m<-as.numeric(ff_albers_sf$dist_btwn_pts_m)
 
-hist(ff_albers_sf$dist)
+hist(ff_albers_sf$dist_btwn_pts_m)
 
-#convert the time lag minutes decimal field to seconds for m/s speed calc   
+#re-attach og xy albers coords that have been reformated in 'geometry' column 
+ff_albers_sf$x.albers = ff_albers$x.albers
+ff_albers_sf$y.albers = ff_albers$y.albers
+
+#convert the time lag minutes decimal field to seconds for new m/s speed calc   
 ff_albers_sf$timelag_sec<- as.numeric( lubridate::dminutes(ff_albers_sf$timeLag))
 
 #calc new m/s speed field by K.B.
-ff_albers_sf$speed2_ms<- ff_albers_sf$dist/ff_albers_sf$timelag_sec
+ff_albers_sf$speed2_ms<- ff_albers_sf$dist_btwn_pts_m/ff_albers_sf$timelag_sec
 
 #check for missing bff count data here
-missing <- ff_albers_sf[is.na(ff_albers_sf$dist),] #947 NAs for dist, but thats okay bc theres 947 bat/nights
+#missing <- ff_albers_sf[is.na(ff_albers_sf$dist_btwn_pts_m),] #947 NAs for dist, but thats okay bc theres 947 bat/nights
 #and each bat/night needs an end point with no distance calculated 
 
 #remove the last obs of each night with na for dist so I can get quantiles in next step 
-ff_albers_sf_distcl <- ff_albers_sf[!is.na(ff_albers_sf$dist),] 
+#ff_albers_sf_distcl <- ff_albers_sf[!is.na(ff_albers_sf$dist_btwn_pts_m),] 
 
-#get the 95% C.I. of the measured distance btwn gps track points, trims off the points likely to be in error
-qts <- quantile(ff_albers_sf_distcl$dist,probs=c(.05,.95))
-## 1.99, 951.9 m,   
-#(952 seems reasonable, https://australian.museum/learn/animals/mammals/black-flying-fox/ says they can fly 35-40km/hr or ~2.91-3.33km/5min,
-#SP Thomas 1975 shows 9m/s BFF in wind tunnel, RE Carpenter 1984 measures GHFF ~8.4 m/s,so dists of 2.4-2.97 km/5min are reasonable?)
-#assumption::wind tunnel in papers replicate natural flight across landscape, however GPS data here may dispute that cutoff
-
-#show the central 95%cutoff
-hist(ff_albers_sf_distcl$dist)
-abline(v=qts[1],col="red")
-abline(v=qts[2],col="red")
+#get the 95% C.I. of the measured distance btwn gps track points, trims off the roosting pts going 0m & the odd bats that go very far 
+#qts <- quantile(ff_albers_sf_distcl$dist_btwn_pts_m,probs=c(.05,.95))
+## 1.12, 951.9 m,   
+  #(952 seems reasonable, https://australian.museum/learn/animals/mammals/black-flying-fox/ says they can fly 35-40km/hr or ~2.91-3.33km/5min,
+  #SP Thomas 1975 shows 9m/s BFF in wind tunnel, RE Carpenter 1984 measures GHFF ~8.4 m/s,so dists of 2.4-2.97 km/5min are reasonable?)
+  #assumption::wind tunnel in papers replicate natural flight across landscape, however GPS data here may dispute that cutoff
 
 
 #show histogram of distances between 5 min interval, max is >6000km, which in arcgis looks real,
 # & at 20m/s speed checks out but isn't 100% correct. the math doesn't always fit. arc shows max should be 
-ggplot(ff_albers_sf_distcl, aes(x= dist))+
-  geom_histogram(fill="black", color="black") +
-  theme_bw(base_size = 16) +
-  geom_vline(xintercept = c(2, 952), color = "red")
+# ggplot(ff_albers_sf_distcl, aes(x= dist_btwn_pts_m))+
+#   geom_histogram(fill="black", color="black") +
+#   theme_bw(base_size = 16) +
+#   geom_vline(xintercept = c(2, 952), color = "red")
 
-#find the furthest distance away per night bat 
+#find the total distance traveled by each bat night, cumulative sum of distance (not max displacement)
+ff_albers_sf$cumsum_distKm<- ave(ff_albers_sf$dist_btwn_pts_m, ff_albers_sf$night_ID, FUN = cumsum)*0.001
+hist(ff_albers_sf$cumsum_distKm)
 
-ff_albers_sf_distcl$cumsum_distKm<- ave(ff_albers_sf_distcl$dist, ff_albers_sf_distcl$night_ID, FUN = cumsum)*0.001
-hist(ff_albers_sf_distcl$cumsum_distKm)
-##this  is  wrong
-# ff_albers_sf2<- ff_albers_sf%>%
-#   group_by(night_ID) %>%
-#   group_split()
-# #apply a function to each list
-# distance_per_group <- map(ff_albers_sf2, function(x){
-#   distance_matrix <- st_distance(x)
-#   biggest_distance <- as.numeric(which(distance_matrix == max(distance_matrix), arr.ind = TRUE)[1,])
-#   farthest_apart <- x[biggest_distance,]
-# })
-# 
-# #rbind them to dataframe
-# distance_per_group<- do.call("rbind", distance_per_group)
-# colnames(distance_per_group)[18]<- "nightly_max_displacement_meters"
-# 
+## get max tracklength for each bat
+csum_dists_nghtID<- as.data.frame(ff_albers_sf %>%
+                                    group_by(night_ID) %>%
+                                    dplyr::summarise(
+                                    cumsumdist_km = max(cumsum_distKm, na.rm = T)))
+
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
+######## ######### ######### MAXIMUM DISPLACEMENT OF EACH BAT NIGHT ######## ######### ######### 
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
+#group by night_ID and calculate euclidean distance of every xy albers point to the origin **of that night_ID, nor true original roost 
+ff_albers_sf2<- ff_albers_sf %>% 
+  group_by(night_ID) %>%
+  mutate(eucdist_nt_origin = as.matrix(dist(cbind(x.albers, y.albers)))[1, ])
+ff_albers_sf2$eucdist_nt_origin_KM<- ff_albers_sf2$eucdist_nt_origin*0.001
+
+#find the further euc. distance for each night_ID, i.e. the maximum displacement that bat night tracked
+dist_sums_nghtID<- as.data.frame(ff_albers_sf2 %>%
+                                          group_by(night_ID, roost) %>%
+                                          dplyr::summarise(
+                                          max_displacement_km = max(eucdist_nt_origin_KM, na.rm = T),
+                                          #max_speed2_ms = max(speed2_ms),
+                                          #max_dist_btwn_pts_m = max(dist_btwn_pts_m),
+                                          mean_dist_btwn_pts_m = mean(dist_btwn_pts_m, na.rm = T )))
+
+#get the 95% C.I. of the measured distance btwn gps track points, trims off the points likely to be in error
+#qts2 <- quantile(dist_sums_nghtID$max_displacement_km ,probs=c(.05,.95))
+#0.463km, 24.24km 
+
+##############################################
+#plotting histogram of nightly distance 
+ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
+  geom_histogram() +
+  scale_fill_manual(values = c("royalblue4", "orange3")) +
+  theme_bw(base_size = 12) +
+  labs(y= "Count of Bat Nights Tracked", x = "Maximum Displacement KM", fill = "Roost") +
+  geom_vline(xintercept = c(0.463, 24.24), color = "red", size = 1, linetype = "dashed") +
+  theme(legend.position = c(0.85,0.9))
+
+ggsave("MaxDispKm_histbyroost_95cilabel_kb20220726.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
+
+ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
+  geom_density() +
+  scale_fill_manual(values = c("royalblue4", "orange3")) +
+  theme_bw(base_size = 12) +
+  scale_x_continuous(breaks = c(0,5,10,15,20,25,30,40,50,100,150),
+    labels = c(0,5,10,15,20,25,30,40,50,100,150)) +
+  labs(y= "Density of Bat Nights Tracked", x = "Maximum Displacement KM", fill = "Roost") +
+  geom_vline(xintercept = c(0.463, 24.24), color = "red", size = 1, linetype = "dashed") +
+  theme(legend.position = c(0.85,0.9))
+
+ggsave("MaxDispKm_densbyroost_95cilabel_kb20220726.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
+
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
+######## ######### ######### CLASSIFY BAT NIGHTS AS RETURN/LEAVE ORIGIN ROOST  ######## ######### ######### 
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
+#take out the firs and last observation of each bat night tracked 
+ff_alb_frstlst<- ff_albers_sf2 %>% 
+  group_by(night_ID) %>%
+  slice(c(1, n())) %>%
+  ungroup()
+qts3 <- quantile(ff_alb_frstlst$eucdist_nt_origin,probs=c(.10,.90))
 
 
+#paste 1/0 if the bat returned to the original rooos of that night, its hard bc they never fly back
+#exactly where they started so what cutoff is good as still being 'within the roost'
+ff_return_nights<-  ff_alb_frstlst %>% 
+  group_by(night_ID) %>%
+  mutate(close_to_roost = ifelse(eucdist_nt_origin <= 200, 1, 0), #testing cutoff at 150m away or like 500ft 
+  rtrn_nt_origin=min(close_to_roost))
 
-##from earlier code copied over for summaries 
-## see if traveling distances are diff by roost 
-roosts_sums<- as.data.frame(nightbats %>%
-                          group_by(roost) %>%
-                           dplyr::summarise(n = n(),
-                                            mean_maxdisp_km= mean(max_disp_KM),
-                                            med_maxdisp_km= median(max_disp_KM), 
-                                            max_maxdisp_km = max(max_disp_KM)))
-forage_sums<- as.data.frame(forage_nights2 %>%
-                              group_by(roost) %>%
-                              dplyr::summarise(n = n(),
-                                                mean_maxdisp_km= mean(max_disp_KM),
-                                               med_maxdisp_km= median(max_disp_KM))) 
+ff_return_nights_only<- unique(data.frame("night_ID" = ff_return_nights$night_ID,"rtn_nt_origin" = ff_return_nights$rtrn_nt_origin))
+table(ff_return_nights_only$rtn_nt_origin)
+# 0   1 
+# 190 757
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
+######## ######### ######### SUMMARIZING ALL BAT NIGHTS TRACKED ######## ######### ######### 
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
+
+night_ID_sums<- merge( dist_sums_nghtID,csum_dists_nghtID, by = c("night_ID", "geometry") )
+night_ID_sums[2]<-NULL #geometry still somehow comes through
+
+night_ID_sums<- cbind(night_ID_sums, ff_return_nights_only$rtn_nt_origin)
+colnames(night_ID_sums)[6]<- "rtn_nt_origin"
+
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
+######## ######### # CHARACTERIZE DISTANCES FOR ANIMALS RETURNING TO ORIGINAL ROOST POINT ######## ######### ######### 
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
+
+ff_clnsums_df<- merge(ff_albers_sf2, night_ID_sums, by = c("night_ID", "roost"), all.x =T) 
+ff_clnsums_df[28]<- NULL #take out lead column
+ff_clnsums_df<-as.data.frame(ff_clnsums_df)
+
+class(ff_clnsums_df)
+
+
+write.csv(ff_clnsums_df, "ADbfftracking_KBclnsumsdf_20220727.csv", row.names = F)
