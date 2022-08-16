@@ -23,6 +23,7 @@ library(raster)
   #to inform a point density buffer of bff space use around roost. NB to set up meeting with LM so I can present
   #what I am doing, why this data could be informative, & what would be our agreement of data sharing/authorship 
 #update:: Mon July 25, 2022 -meeting set up for friday july 29, 11am  
+#Aug update: have the metadata files but raw data didnt come through correctly, wrong dates and serial numbers
 #####################################################################################################################
 
 #read in the data that has all gps points (forages, commuting, roosting - point classified on tag speed
@@ -171,50 +172,105 @@ dist_sums_nghtID<- as.data.frame(ff_albers_sf2 %>%
 
 ##############################################
 #plotting histogram of nightly distance 
-ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
-  geom_histogram() +
-  scale_fill_manual(values = c("royalblue4", "orange3")) +
-  theme_bw(base_size = 12) +
-  labs(y= "Count of Bat Nights Tracked", x = "Maximum Displacement KM", fill = "Roost") +
-  geom_vline(xintercept = c(0.463, 24.24), color = "red", size = 1, linetype = "dashed") +
-  theme(legend.position = c(0.85,0.9))
+# ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
+#   geom_histogram() +
+#   scale_fill_manual(values = c("royalblue4", "orange3")) +
+#   theme_bw(base_size = 12) +
+#   labs(y= "Count of Bat Nights Tracked", x = "Maximum Displacement KM", fill = "Roost") +
+#   geom_vline(xintercept = c(0.463, 24.24), color = "red", size = 1, linetype = "dashed") +
+#   theme(legend.position = c(0.85,0.9))
+# 
+# ggsave("MaxDispKm_histbyroost_95cilabel_kb20220726.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
+# 
+# ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
+#   geom_density() +
+#   scale_fill_manual(values = c("royalblue4", "orange3")) +
+#   theme_bw(base_size = 12) +
+#   scale_x_continuous(breaks = c(0,5,10,15,20,25,30,40,50,100,150),
+#     labels = c(0,5,10,15,20,25,30,40,50,100,150)) +
+#   labs(y= "Density of Bat Nights Tracked", x = "Maximum Displacement KM", fill = "Roost") +
+#   geom_vline(xintercept = c(0.463, 24.24), color = "red", size = 1, linetype = "dashed") +
+#   theme(legend.position = c(0.85,0.9))
+# 
+# ggsave("MaxDispKm_densbyroost_95cilabel_kb20220726.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
+# 
 
-ggsave("MaxDispKm_histbyroost_95cilabel_kb20220726.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
-
-ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
-  geom_density() +
-  scale_fill_manual(values = c("royalblue4", "orange3")) +
-  theme_bw(base_size = 12) +
-  scale_x_continuous(breaks = c(0,5,10,15,20,25,30,40,50,100,150),
-    labels = c(0,5,10,15,20,25,30,40,50,100,150)) +
-  labs(y= "Density of Bat Nights Tracked", x = "Maximum Displacement KM", fill = "Roost") +
-  geom_vline(xintercept = c(0.463, 24.24), color = "red", size = 1, linetype = "dashed") +
-  theme(legend.position = c(0.85,0.9))
-
-ggsave("MaxDispKm_densbyroost_95cilabel_kb20220726.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
-######## ######### ######### CLASSIFY BAT NIGHTS AS RETURN/LEAVE ORIGIN ROOST  ######## ######### ######### 
+######## ######### ######### CLASSIFY BAT NIGHTS AS RETURN/LEAVE NIGHTLY ORIGIN ROOST  ######## ######### ######### 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
-#take out the firs and last observation of each bat night tracked 
+#(are first and last roost point within x distance of each other)
+#take out the first and last observation of each bat night tracked 
 ff_alb_frstlst<- ff_albers_sf2 %>% 
   group_by(night_ID) %>%
   slice(c(1, n())) %>%
   ungroup()
-qts3 <- quantile(ff_alb_frstlst$eucdist_nt_origin,probs=c(.10,.90))
+#qts3 <- quantile(ff_alb_frstlst$eucdist_nt_origin,probs=c(.10,.90))
+
+ff_alb_last<-subset(ff_alb_frstlst, eucdist_nt_origin >0)
+
+# ff_alb_last %>% 
+#   filter(eucdist_nt_origin <1000 & eucdist_nt_origin > 50) %>%
+# ggplot( aes(x= eucdist_nt_origin, fill = roost))+
+#   geom_density(alpha = 0.5) +
+#   scale_fill_manual(values = c("royalblue4", "orange3")) +
+#   theme_bw(base_size = 14) +
+#   scale_x_continuous(breaks = c(0,100, 200, 300, 400, 500, 600, 700, 800, 900, 1000),
+#                      labels = c(0,100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)) +
+#   labs(y= "Density of Bat-Nights Tracked", x = "Euclidean distance from origin point each night (m)", fill = "Roost") +
+#   #geom_vline(xintercept = c(0.442, 19.339), color = "red", size = 1, linetype = "dashed") +
+#   theme(legend.position = c(0.85,0.9))
 
 
 #paste 1/0 if the bat returned to the original rooos of that night, its hard bc they never fly back
 #exactly where they started so what cutoff is good as still being 'within the roost'
 ff_return_nights<-  ff_alb_frstlst %>% 
   group_by(night_ID) %>%
-  mutate(close_to_roost = ifelse(eucdist_nt_origin <= 200, 1, 0), #testing cutoff at 150m away or like 500ft 
+  mutate(close_to_roost = ifelse(eucdist_nt_origin <= 200, 1, 0), #testing cutoff at 200m away or like 500ft 
   rtrn_nt_origin=min(close_to_roost))
 
 ff_return_nights_only<- unique(data.frame("night_ID" = ff_return_nights$night_ID,"rtn_nt_origin" = ff_return_nights$rtrn_nt_origin))
 table(ff_return_nights_only$rtn_nt_origin)
 # 0   1 
 # 190 757
+
+
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
+######## ######### ######### CLASSIFY THE NIGHTS WHERE ORIGIN POINTS IS AT TRACKING ROOSTS  ######## ######### ######### 
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
+#(is first roost point within x distance of roost where tracker was deployed)
+    ##note **when I try to select for nights when eucdist ==0 i get 951, 
+          #so there are 4 nights where an animal returns within 1m of its origin spot
+#get just the first observations of every bat night tracked 
+ff_alb_frst <- ff_alb_frstlst[!is.na(ff_alb_frstlst$cumsum_distKm),]
+
+#pull out toowooomba roost 
+twb_alb_frst<- subset(ff_alb_frst, roost == "Toowoomba")
+
+#absolute diff between albers loc column and location of TWB or RCF roost 
+twb_alb_frst$absdiffx<- abs(twb_alb_frst$x.albers - 1936878)
+twb_alb_frst$absdiffy<- abs(twb_alb_frst$y.albers - -3145726)
+
+#make conditional column, if both starting locations are less than 300m away from roost loc then it starts at TWB
+twb_alb_frst$origin<- ifelse(twb_alb_frst$absdiffx <= 500 & twb_alb_frst$absdiffy <= 500, 1 , 0  )
+
+table(twb_alb_frst$origin) #300/519 bat nights where started at Toowoomba
+############## ############## Redcliffe ############## ############## 
+rcf_alb_frst<- subset(ff_alb_frst, roost == "Redcliffe")
+
+#absolute diff between albers loc column and location of TWB or RCF roost 
+rcf_alb_frst$absdiffx<- abs(rcf_alb_frst$x.albers - 2054895)
+rcf_alb_frst$absdiffy<- abs(rcf_alb_frst$y.albers - -3122912)
+
+#make conditional column, if both starting locations are less than 300m away from roost loc then it starts at TWB
+rcf_alb_frst$origin<- ifelse(rcf_alb_frst$absdiffx <= 500 & rcf_alb_frst$absdiffy <= 500, 1 , 0  )
+
+table(rcf_alb_frst$origin) #252/428 bat nights where started at Redcliffe, 4 more nights if I change to 900m
+
+#put back together
+ff_alb_originpt<- as.data.frame(rbind(twb_alb_frst, rcf_alb_frst))
+ff_alb_originpt[,2:27]<- NULL
+colnames(ff_alb_originpt)[2]<- "origin_at_trcking_roost"
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
 ######## ######### ######### SUMMARIZING ALL BAT NIGHTS TRACKED ######## ######### ######### 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
@@ -223,17 +279,65 @@ night_ID_sums<- merge( dist_sums_nghtID,csum_dists_nghtID, by = c("night_ID", "g
 night_ID_sums[2]<-NULL #geometry still somehow comes through
 
 night_ID_sums<- cbind(night_ID_sums, ff_return_nights_only$rtn_nt_origin)
-colnames(night_ID_sums)[6]<- "rtn_nt_origin"
+night_ID_sums<- merge(night_ID_sums,ff_alb_originpt, by = "night_ID")
+colnames(night_ID_sums)[6]<- "rtrn_night_origin"
+
+mean(night_ID_sums$max_displacement_km) #8.480
+median(night_ID_sums$max_displacement_km) #4.914
+max(night_ID_sums$max_displacement_km) #149.040
+write.csv(night_ID_sums, "ADbfftracking_nightID_sums_20220816.csv", row.names = F)
+
 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
 ######## ######### # CHARACTERIZE DISTANCES FOR ANIMALS RETURNING TO ORIGINAL ROOST POINT ######## ######### ######### 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
 
 ff_clnsums_df<- merge(ff_albers_sf2, night_ID_sums, by = c("night_ID", "roost"), all.x =T) 
-ff_clnsums_df[28]<- NULL #take out lead column
+#ff_clnsums_df[28]<- NULL #take out lead column
 ff_clnsums_df<-as.data.frame(ff_clnsums_df)
 
 class(ff_clnsums_df)
 
+write.csv(ff_clnsums_df, "ADbfftracking_KBclnsumsdf_20220816_fix.csv", row.names = F)
 
-write.csv(ff_clnsums_df, "ADbfftracking_KBclnsumsdf_20220727.csv", row.names = F)
+ff_gps_cl_return<- subset(ff_clnsums_df, rtrn_night_origin == 1)
+ff_gps_cl_rtrn_trackroost<- subset(ff_clnsums_df, rtrn_night_origin == 1 & origin_at_trcking_roost == 1)
+#453 roost nights where animal starts at tracking roost and returns to tracking roost 
+
+ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = roost))+
+  geom_histogram() +
+  scale_fill_manual(values = c("royalblue4", "orange3")) +
+  theme_bw(base_size = 12) +
+  labs(y= "Count of Bat Nights Tracked with Return", x = "Maximum Displacement KM", fill = "Roost") +
+  geom_vline(xintercept = c(0.442, 19.339), color = "red", size = 1, linetype = "dashed") +
+  theme(legend.position = c(0.85,0.9))
+
+qts4 <- quantile(ff_gps_cl_return$max_displacement_km,probs=c(.05,.95))
+#0.442, #19.339
+ggsave("MaxDispKm_histbyroost_95cilabel_rtntorign_kb20220727.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
+
+
+ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = roost))+
+  geom_density() +
+  scale_fill_manual(values = c("royalblue4", "orange3")) +
+  theme_bw(base_size = 12) +
+  scale_x_continuous(breaks = c(0,5,10,15,20,25,30,40,50,100,150),
+                     labels = c(0,5,10,15,20,25,30,40,50,100,150)) +
+  labs(y= "Density of Bat Nights Tracked with Return", x = "Maximum Displacement KM", fill = "Roost") +
+  geom_vline(xintercept = c(0.463, 19.339), color = "red", size = 1, linetype = "dashed") +
+  theme(legend.position = c(0.85,0.9))
+
+####get distribution of just central 95% data
+ff_gps_cl_return %>%
+  filter(max_displacement_km <= 25)%>%
+ggplot( aes(x= max_displacement_km, fill = roost))+
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("royalblue4", "orange3")) +
+  theme_bw(base_size = 15) +
+  scale_x_ADbfftracking_KBclnsumsdf_20220727.csvontinuous(breaks = c(0,2,4,6,8,10,12,14,16,18,20,22,24,26),
+                     labels = c(0,2,4,6,8,10,12,14,16,18,20,22,24,26)) +
+  labs(y= "Density of Bat Nights Tracked with Return", x = "Maximum Displacement KM", fill = "Roost") +
+  geom_vline(xintercept = c(0.463, 19.339), color = "red", size = 1, linetype = "dashed") +
+  theme(legend.position = c(0.85,0.9))
+
+#ggsave("MaxDispKm_densitybyroost_95cilabel_rtntorign_kb20220727.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
