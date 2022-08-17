@@ -304,6 +304,8 @@ ff_gps_cl_return<- subset(ff_clnsums_df, rtrn_night_origin == 1)
 ff_gps_cl_rtrn_trackroost<- subset(ff_clnsums_df, rtrn_night_origin == 1 & origin_at_trcking_roost == 1)
 #453 roost nights where animal starts at tracking roost and returns to tracking roost 
 
+
+
 ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = roost))+
   geom_histogram() +
   scale_fill_manual(values = c("royalblue4", "orange3")) +
@@ -341,3 +343,37 @@ ggplot( aes(x= max_displacement_km, fill = roost))+
   theme(legend.position = c(0.85,0.9))
 
 #ggsave("MaxDispKm_densitybyroost_95cilabel_rtntorign_kb20220727.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
+
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
+######## ######### # Characterize movement of animals to/from other known roosts  ######## ######### ######### 
+######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
+
+######## ######### # (Jumping in point instead of processing everything above)######## ######### ######### 
+   ff<- read.csv("ADbfftracking_KBclnsumsdf_20220816_fix.csv", header = T, stringsAsFactors = F)
+#identify roosts where origin point is not at another roost but the animals return to within 500m of their origin point that night 
+ff_return_notorigin<- subset(ff, origin_at_trcking_roost == 0 & rtrn_night_origin == 1) #41525
+
+#take out the first observation of each bat night tracked 
+ff_return_frst<- ff_return_notorigin %>% 
+  group_by(night_ID) %>%
+  slice(1) %>%
+  ungroup()
+
+#read in roost locations in queensland 
+roosts<-read.csv("flying-fox-camps-qld.csv", header = T, stringsAsFactors = F)
+#reduce to subtrop area to reduce processing time 
+subtrop_roosts<- subset(roosts, Latitude < -23.26)
+colnames(subtrop_roosts)[6]<- "lat"
+colnames(subtrop_roosts)[7]<- "long"
+
+#check if the origin point is within 500m of a known roost, paste roost name 
+library(geosphere)
+origin_to_anyroost = distm(ff_return_frst[c("long","lat")], subtrop_roosts[c("long","lat")])
+
+rownames(origin_to_anyroost) = ff_return_frst$night_ID
+colnames(origin_to_anyroost) = subtrop_roosts$Name.of.camp
+class(origin_to_anyroost)
+
+t<- which(origin_to_anyroost < 500, arr.ind = T)
+
+#next step print the roost its within 500m of 
