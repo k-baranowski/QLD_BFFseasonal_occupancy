@@ -28,16 +28,51 @@ sum(is.na(all_ff_gpspts$recorded_at2)) #0 check
 #order the observations by batID night and time 
 all_ff_gpspts<-all_ff_gpspts[(order( all_ff_gpspts$ID, all_ff_gpspts$recorded_at2)),]
 
-all_ff_gpspts <- all_ff_gpspts %>%
+all_ff_gpspts2<-subset(all_ff_gpspts, lat != 0 )
+
+
+all_ff_gpspts <- all_ff_gpspts2 %>%
   arrange(ID, recorded_at2) %>%
   group_by(ID) %>%
   mutate(lag =  strptime(recorded_at2, "%Y-%m-%d  %H:%M:%S", tz = "GMT") - lag(strptime(recorded_at2, "%Y-%m-%d  %H:%M:%S", tz = "GMT"), 
               default = strptime(recorded_at2, "%Y-%m-%d  %H:%M:%S", tz = "GMT")[1]))
 all_ff_gpspts<- as.data.frame(all_ff_gpspts)
 
-sum(is.na(all_ff_gpspts$lag)) # 0 
+#parse out times associated with observations and lags between
+all_ff_gpspts$lag_sec = as.numeric(str_sub(all_ff_gpspts$lag, end=5))
+all_ff_gpspts$day<- as.double(format(all_ff_gpspts$recorded_at2, '%d'))
+all_ff_gpspts$TOD <- format(all_ff_gpspts$recorded_at2, format="%H:%M:%S")
 
-### make new column fore night_id based on time lag 
+
+all_ff_gpspts<- all_ff_gpspts%>%
+  arrange(ID, recorded_at2) %>%
+  group_by(ID) %>%
+  mutate(period = if_else((TOD > "17:00:00") & ( lag_sec > 20000), "new_day", "same_night"))  %>%
+  as.data.frame()
+
+#set up column denoting number of nights tracked
+head(all_ff_gpspts)
+require(data.table)
+all_ff_gpspts <- as.data.table(all_ff_gpspts)
+all_ff_gpspts[,night_ID := rleid(period, ID)]
+ 
+#fix the sequential count since it basically counts twice every new night
+all_ff_gpspts$night_ID[all_ff_gpspts$period== "new_day"] <- (all_ff_gpspts$night_ID[all_ff_gpspts$period == "new_day"] - 1)
+all_ff_gpspts$night_ID[all_ff_gpspts$period== "same_night"] <- (all_ff_gpspts$night_ID[all_ff_gpspts$period == "same_night"] - 2)
+
+#rerun sequence number generator after correcting for double counting changes in previous step 
+all_ff_gpspts[,night_ID := rleid(night_ID), by = ID]
+#make night id number with two digits starting at 0 like Adrienne 
+all_ff_gpspts$night_ID<- sprintf("%02d", as.numeric(all_ff_gpspts$night_ID -1))
+
+#paste animal id and night number together 
+all_ff_gpspts$night_ID = paste(all_ff_gpspts$ID, (all_ff_gpspts$night_ID), sep = "_")
+
+ff_gps_cl<- all_ff_gpspts[,-c(12:17,21 )]
+ff_gps_cl<- ff_gps_cl[,c(1,15,3,4,2,14,12,13,6,7,8:11 )]
+
+
+### make new column fore night_ID based on time lag 
 # #add in column for season 
 getseason <- function(dates) { # function for AUS seasons
   SS = as.Date("2013-12-01", format = "%Y-%m-%d") # Winter Solstice for US
@@ -70,9 +105,9 @@ newcrs<- CRS("+proj=aea +lat_1=-18 +lat_2=-36 +lat_0=0 +lon_0=132 +x_0=0 +y_0=0 
 #reproject into Australian albers and pull out to of df, (this is clunky but it works and isn't that long) 
 ff_spdf_albers <- spTransform(ff_spdf, CRS = newcrs)
 ff_albers<- as.data.frame(ff_spdf_albers)
-colnames(ff_albers)[18]<- "x.albers"
-colnames(ff_albers)[19]<- "y.albers"
-
+colnames(ff_albers)[16]<- "x.albers"
+colnames(ff_albers)[17]<- "y.albers"
+ff_albers2<- subset(ff_albers, lat != 0)
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
 ######## ######### ######### BAT MOVEMENT/ TIME - DISTANCE ANALYSIS ######## ######### ######### 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
@@ -86,8 +121,12 @@ ff_albers_sf<- st_as_sf(
 
 class(ff_albers_sf) #sf obj check 
 
+#there are 31 observations with 0,0 lat long coords, need to remove those so it doesn't mess up distances 
+ff_albers_sf<- subset(ff_albers_sf, lat != 0)
+
 #calculate pairwise distance for every bat night. last obs. is left  NA, so value is assigned to 1st coord pt in df
-ff_albers_sf<- ff_albers_sf%>%
+ff_albers_sf<- ff_albers_sf %>%
+  arrange(ID, recorded_at2) %>%
   group_by(night_ID) %>%
   mutate(
     lead = geometry[row_number() + 1],
@@ -96,25 +135,23 @@ ff_albers_sf$dist_btwn_pts_m<-as.numeric(ff_albers_sf$dist_btwn_pts_m)
 
 
 #re-attach og xy albers coords that have been reformated in 'geometry' column 
-ff_albers_sf$x.albers = ff_albers$x.albers
-ff_albers_sf$y.albers = ff_albers$y.albers
+ff_albers_sf$x.albers = ff_albers2$x.albers
+ff_albers_sf$y.albers = ff_albers2$y.albers
 
-#convert the time lag minutes decimal field to seconds for new m/s speed calc   
-ff_albers_sf$timelag_sec<- as.numeric( lubridate::dminutes(ff_albers_sf$timeLag))
 
 #calc new m/s speed field by K.B.
-ff_albers_sf$speed2_ms<- ff_albers_sf$dist_btwn_pts_m/ff_albers_sf$timelag_sec
+ff_albers_sf$speed2_ms<- ff_albers_sf$dist_btwn_pts_m/ff_albers_sf$lag_sec
 
 #check for missing bff count data here
-#missing <- ff_albers_sf[is.na(ff_albers_sf$dist_btwn_pts_m),] #947 NAs for dist, but thats okay bc theres 947 bat/nights
+missing <- ff_albers_sf[is.na(ff_albers_sf$dist_btwn_pts_m),] #used to be 947 #958 NAs for dist, but thats okay bc theres 947 bat/nights
 #and each bat/night needs an end point with no distance calculated 
 
 #remove the last obs of each night with na for dist so I can get quantiles in next step 
-#ff_albers_sf_distcl <- ff_albers_sf[!is.na(ff_albers_sf$dist_btwn_pts_m),] 
+ff_albers_sf_distcl <- ff_albers_sf[!is.na(ff_albers_sf$dist_btwn_pts_m),] 
 
 #get the 95% C.I. of the measured distance btwn gps track points, trims off the roosting pts going 0m & the odd bats that go very far 
-#qts <- quantile(ff_albers_sf_distcl$dist_btwn_pts_m,probs=c(.05,.95))
-## 1.12, 951.9 m,   
+qts <- quantile(ff_albers_sf_distcl$dist_btwn_pts_m,probs=c(.05,.95))
+## 2.8, 958.8 m,   
   #(952 seems reasonable, https://australian.museum/learn/animals/mammals/black-flying-fox/ says they can fly 35-40km/hr or ~2.91-3.33km/5min,
   #SP Thomas 1975 shows 9m/s BFF in wind tunnel, RE Carpenter 1984 measures GHFF ~8.4 m/s,so dists of 2.4-2.97 km/5min are reasonable?)
   #assumption::wind tunnel in papers replicate natural flight across landscape, however GPS data here may dispute that cutoff
@@ -143,7 +180,7 @@ ff_albers_sf2$eucdist_nt_origin_KM<- ff_albers_sf2$eucdist_nt_origin*0.001
 
 #find the further euc. distance for each night_ID, i.e. the maximum displacement that bat night tracked
 dist_sums_nghtID<- as.data.frame(ff_albers_sf2 %>%
-                                          group_by(night_ID, roost) %>%
+                                          group_by(night_ID, Site) %>%
                                           dplyr::summarise(
                                           max_displacement_km = max(eucdist_nt_origin_KM, na.rm = T),
                                           #max_speed2_ms = max(speed2_ms),
@@ -151,24 +188,25 @@ dist_sums_nghtID<- as.data.frame(ff_albers_sf2 %>%
                                           mean_dist_btwn_pts_m = mean(dist_btwn_pts_m, na.rm = T )))
 
 #get the 95% C.I. of the measured distance btwn gps track points, trims off the points likely to be in error
-#qts2 <- quantile(dist_sums_nghtID$max_displacement_km ,probs=c(.05,.95))
-#0.463km, 24.24km 
+qts2 <- quantile(dist_sums_nghtID$max_displacement_km ,probs=c(.05,.95))
+#0.953km, 24.946km 
 
 ##############################################
 #plotting histogram of nightly distance 
-# ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
+# ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = Site))+
 #   geom_histogram() +
-#   scale_fill_manual(values = c("royalblue4", "orange3")) +
+#   scale_fill_manual(values = c("royalblue4", "orange3", "forestgreen")) +
 #   theme_bw(base_size = 12) +
 #   labs(y= "Count of Bat Nights Tracked", x = "Maximum Displacement KM", fill = "Roost") +
 #   geom_vline(xintercept = c(0.463, 24.24), color = "red", size = 1, linetype = "dashed") +
 #   theme(legend.position = c(0.85,0.9))
-# 
+
+table(dist_sums_nghtID$Site)
 # ggsave("MaxDispKm_histbyroost_95cilabel_kb20220726.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
 # 
-# ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = roost))+
-#   geom_density() +
-#   scale_fill_manual(values = c("royalblue4", "orange3")) +
+# ggplot(dist_sums_nghtID, aes(x= max_displacement_km, fill = Site))+
+#   geom_density(alpha = 0.5) +
+#   scale_fill_manual(values = c("forestgreen", "royalblue4", "orange3")) +
 #   theme_bw(base_size = 12) +
 #   scale_x_continuous(breaks = c(0,5,10,15,20,25,30,40,50,100,150),
 #     labels = c(0,5,10,15,20,25,30,40,50,100,150)) +
@@ -216,7 +254,7 @@ ff_return_nights<-  ff_alb_frstlst %>%
 ff_return_nights_only<- unique(data.frame("night_ID" = ff_return_nights$night_ID,"rtn_nt_origin" = ff_return_nights$rtrn_nt_origin))
 table(ff_return_nights_only$rtn_nt_origin)
 # 0   1 
-# 190 757
+# 192 766
 
 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
@@ -228,8 +266,9 @@ table(ff_return_nights_only$rtn_nt_origin)
 #get just the first observations of every bat night tracked 
 ff_alb_frst <- ff_alb_frstlst[!is.na(ff_alb_frstlst$cumsum_distKm),]
 
+
 #pull out toowooomba roost 
-twb_alb_frst<- subset(ff_alb_frst, roost == "Toowoomba")
+twb_alb_frst<- subset(ff_alb_frst, Site == "Toowoomba")
 
 #absolute diff between albers loc column and location of TWB or RCF roost 
 twb_alb_frst$absdiffx<- abs(twb_alb_frst$x.albers - 1936878)
@@ -238,9 +277,9 @@ twb_alb_frst$absdiffy<- abs(twb_alb_frst$y.albers - -3145726)
 #make conditional column, if both starting locations are less than 300m away from roost loc then it starts at TWB
 twb_alb_frst$origin<- ifelse(twb_alb_frst$absdiffx <= 500 & twb_alb_frst$absdiffy <= 500, 1 , 0  )
 
-table(twb_alb_frst$origin) #300/519 bat nights where started at Toowoomba
+table(twb_alb_frst$origin) #291/519 bat nights where started at Toowoomba
 ############## ############## Redcliffe ############## ############## 
-rcf_alb_frst<- subset(ff_alb_frst, roost == "Redcliffe")
+rcf_alb_frst<- subset(ff_alb_frst, Site == "Redcliffe")
 
 #absolute diff between albers loc column and location of TWB or RCF roost 
 rcf_alb_frst$absdiffx<- abs(rcf_alb_frst$x.albers - 2054895)
@@ -250,10 +289,24 @@ rcf_alb_frst$absdiffy<- abs(rcf_alb_frst$y.albers - -3122912)
 rcf_alb_frst$origin<- ifelse(rcf_alb_frst$absdiffx <= 500 & rcf_alb_frst$absdiffy <= 500, 1 , 0  )
 
 table(rcf_alb_frst$origin) #252/428 bat nights where started at Redcliffe, 4 more nights if I change to 900m
+#236/390
+############## ############## Redcliffe ############## ############## 
+bdb_alb_frst<- subset(ff_alb_frst, Site == "Bundaberg")
+
+#absolute diff between albers loc column and location of TWB or RCF roost 
+bdb_alb_frst$absdiffx<- abs(bdb_alb_frst$x.albers - 2036276)
+bdb_alb_frst$absdiffy<- abs(bdb_alb_frst$y.albers - -2846193)
+
+#make conditional column, if both starting locations are less than 300m away from roost loc then it starts at TWB
+bdb_alb_frst$origin<- ifelse(bdb_alb_frst$absdiffx <= 500 & bdb_alb_frst$absdiffy <= 500, 1 , 0  )
+
+table(bdb_alb_frst$origin) #252/428 bat nights where started at Redcliffe, 4 more nights if I change to 900m
+
+#6/82?
 
 #put back together
-ff_alb_originpt<- as.data.frame(rbind(twb_alb_frst, rcf_alb_frst))
-ff_alb_originpt[,2:27]<- NULL
+ff_alb_originpt<- as.data.frame(rbind(twb_alb_frst, rcf_alb_frst, bdb_alb_frst))
+ff_alb_originpt[,c(1,3:26)]<- NULL
 colnames(ff_alb_originpt)[2]<- "origin_at_trcking_roost"
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
 ######## ######### ######### SUMMARIZING ALL BAT NIGHTS TRACKED ######## ######### ######### 
@@ -266,47 +319,47 @@ night_ID_sums<- cbind(night_ID_sums, ff_return_nights_only$rtn_nt_origin)
 night_ID_sums<- merge(night_ID_sums,ff_alb_originpt, by = "night_ID")
 colnames(night_ID_sums)[6]<- "rtrn_night_origin"
 
-mean(night_ID_sums$max_displacement_km) #8.480
-median(night_ID_sums$max_displacement_km) #4.914
-max(night_ID_sums$max_displacement_km) #149.040
-write.csv(night_ID_sums, "ADbfftracking_nightID_sums_20220816.csv", row.names = F)
+mean(night_ID_sums$max_displacement_km) #9.04
+median(night_ID_sums$max_displacement_km) #5.294054
+max(night_ID_sums$max_displacement_km) #194.045
+write.csv(night_ID_sums, "LMbfftracking_nightID_sums_20220912.csv", row.names = F)
 
 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ######## 
 ######## ######### # CHARACTERIZE DISTANCES FOR ANIMALS RETURNING TO ORIGINAL ROOST POINT ######## ######### ######### 
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
 
-ff_clnsums_df<- merge(ff_albers_sf2, night_ID_sums, by = c("night_ID", "roost"), all.x =T) 
+ff_clnsums_df<- merge(ff_albers_sf2, night_ID_sums, by = c("night_ID", "Site"), all.x =T) 
 #ff_clnsums_df[28]<- NULL #take out lead column
 ff_clnsums_df<-as.data.frame(ff_clnsums_df)
 
 class(ff_clnsums_df)
 
-write.csv(ff_clnsums_df, "ADbfftracking_KBclnsumsdf_20220816_fix.csv", row.names = F)
+write.csv(ff_clnsums_df, "ADbfftracking_KBclnsumsdf_202208912_fixmaybe.csv", row.names = F)
 
 ff_gps_cl_return<- subset(ff_clnsums_df, rtrn_night_origin == 1)
 ff_gps_cl_rtrn_trackroost<- subset(ff_clnsums_df, rtrn_night_origin == 1 & origin_at_trcking_roost == 1)
 #453 roost nights where animal starts at tracking roost and returns to tracking roost 
 
-write.csv(ff_gps_cl_return, "ADbfftracking_KBclnsumsdf_return_20220831.csv", row.names = F)
+write.csv(ff_gps_cl_return, "ADbfftracking_KBclnsumsdf_return_20220912_maybe.csv", row.names = F)
 
 
-ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = roost))+
+ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = Site))+
   geom_histogram() +
-  scale_fill_manual(values = c("royalblue4", "orange3")) +
+  scale_fill_manual(values = c("forestgreen","royalblue4", "orange3")) +
   theme_bw(base_size = 12) +
   labs(y= "Count of Bat Nights Tracked with Return", x = "Maximum Displacement KM", fill = "Roost") +
   geom_vline(xintercept = c(0.442, 19.339), color = "red", size = 1, linetype = "dashed") +
   theme(legend.position = c(0.85,0.9))
 
 qts4 <- quantile(ff_gps_cl_return$max_displacement_km,probs=c(.05,.95))
-#0.442, #19.339
+#0.947, #20.009
 ggsave("MaxDispKm_histbyroost_95cilabel_rtntorign_kb20220727.eps", plot = last_plot() , width=7,  height =7, units = c("in"), dpi = 350)
 
 
-ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = roost))+
-  geom_density() +
-  scale_fill_manual(values = c("royalblue4", "orange3")) +
+ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = Site))+
+  geom_density(alpha = 0.6) +
+  scale_fill_manual(values = c("forestgreen","royalblue4", "orange3")) +
   theme_bw(base_size = 12) +
   scale_x_continuous(breaks = c(0,5,10,15,20,25,30,40,50,100,150),
                      labels = c(0,5,10,15,20,25,30,40,50,100,150)) +
@@ -317,11 +370,11 @@ ggplot(ff_gps_cl_return, aes(x= max_displacement_km, fill = roost))+
 ####get distribution of just central 95% data
 ff_gps_cl_return %>%
   filter(max_displacement_km <= 25)%>%
-ggplot( aes(x= max_displacement_km, fill = roost))+
+ggplot( aes(x= max_displacement_km, fill = Site))+
   geom_density(alpha = 0.5) +
-  scale_fill_manual(values = c("royalblue4", "orange3")) +
+  scale_fill_manual(values = c("royalblue4", "tomato3", "orange2")) +
   theme_bw(base_size = 15) +
-  scale_x_ADbfftracking_KBclnsumsdf_20220727.csvontinuous(breaks = c(0,2,4,6,8,10,12,14,16,18,20,22,24,26),
+  scale_x_continuous(breaks = c(0,2,4,6,8,10,12,14,16,18,20,22,24,26),
                      labels = c(0,2,4,6,8,10,12,14,16,18,20,22,24,26)) +
   labs(y= "Density of Bat Nights Tracked with Return", x = "Maximum Displacement KM", fill = "Roost") +
   geom_vline(xintercept = c(0.463, 19.339), color = "red", size = 1, linetype = "dashed") +
@@ -334,7 +387,7 @@ ggplot( aes(x= max_displacement_km, fill = roost))+
 ######## ######### ######### ######## ######### ######### ######## ######### ######### ######## ########
 
 ######## ######### # (Jumping in point instead of processing everything above)######## ######### ######### 
-   ff<- read.csv("ADbfftracking_KBclnsumsdf_20220816_fix.csv", header = T, stringsAsFactors = F)
+   ff<- read.csv("ADbfftracking_KBclnsumsdf_202208912_fixmaybe.csv", header = T, stringsAsFactors = F, row.names = NULL)
 #identify roosts where origin point is not at another roost but the animals return to within 500m of their origin point that night 
 ff_return_notorigin<- subset(ff, origin_at_trcking_roost == 1 & rtrn_night_origin == 1) #41525
 
@@ -349,12 +402,12 @@ roosts<-read.csv("flying-fox-camps-qld.csv", header = T, stringsAsFactors = F)
 #reduce to subtrop area to reduce processing time 
 subtrop_roosts<- subset(roosts, Latitude < -23.26)
 colnames(subtrop_roosts)[6]<- "lat"
-colnames(subtrop_roosts)[7]<- "long"
+colnames(subtrop_roosts)[7]<- "lng"
 subtrop_roosts$num<-  1:nrow(subtrop_roosts) 
 
 #check if the origin point is within 500m of a known roost, paste roost name 
 library(geosphere)
-origin_to_anyroost = distm(ff_return_frst[c("long","lat")], subtrop_roosts[c("long","lat")])
+origin_to_anyroost = distm(ff_alb_frstlst[c("lng","lat")], subtrop_roosts[c("long","lat")])
 
 rownames(origin_to_anyroost) = ff_return_frst$night_ID
 colnames(origin_to_anyroost) = subtrop_roosts$Name.of.camp
