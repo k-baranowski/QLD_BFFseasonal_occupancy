@@ -9,6 +9,7 @@ library(tidyr)
 library(reshape2)
 library(gridExtra)
 library(lubridate)
+library(gdata)
 library(data.table)
 
 
@@ -16,29 +17,71 @@ library(data.table)
 #importing data for QLD roost locations 
 qld<- read.csv("cleaned_qld_ff_data_Apr03_Mar22_kb_20221129.csv", header = T, stringsAsFactors = F)
 
+#specify date format and add factor year column
+qld$date <- as.Date(qld$date, format = '%Y-%m-%d')
+qld$month <- format(qld$date, "%m") 
 
+#pull out summer observations to get wrap around season 
+summer_roosts<- subset(qld, season == "summer")
+
+summer_roosts$year2<- ifelse(summer_roosts$month == "01", summer_roosts$year - 1,
+                      ifelse(summer_roosts$month == "02", summer_roosts$year - 1,
+                      ifelse(summer_roosts$month == "12", (summer_roosts$year + 1),
+                      NA)))
+
+summer_roosts$time<- ifelse(summer_roosts$month == "01", paste(summer_roosts$year2, summer_roosts$year, summer_roosts$season),
+                     ifelse(summer_roosts$month == "02", paste(summer_roosts$year2, summer_roosts$year, summer_roosts$season),
+                     ifelse(summer_roosts$month == "12", paste(summer_roosts$year, summer_roosts$year2, summer_roosts$season),
+                     NA)))
+
+summer_roosts$time<- as.factor(summer_roosts$time)
+summer_roosts[23]<- NULL
+
+#pull out other seasons that don't cross over years and make time column 
+other_roosts<- subset(qld, season != "summer")
+other_roosts$time<- as.factor(paste(other_roosts$year, other_roosts$season))
+
+allroosts<- rbind(other_roosts, summer_roosts)
+str(allroosts)
+
+
+##########################################
 # #only consider roosts after 2013
-qld_recent<- subset(qld, qld$date > "2006-12-30" & date < "2022-01-01")  #11323
+qld_recent<- subset(allroosts, allroosts$date > "2006-12-30" & date < "2022-03-01")  #11500
 
 table(qld_recent$year)
-# 2007  2008  2009  2010  2011  2012  2013  2014  2015  2016  2017  2018  2019  2020  2021
-#  320   462   765   978  1130  1334  1423  1198   533   484   434   351   564   660   687
+# 2007  2008  2009  2010  2011  2012  2013  2014  2015  2016  2017  2018  2019  2020  2021 2022
+#  320   462   765   978  1130  1334  1423  1198   533   484   434   351   564   660   687  175
 
 table(qld_recent$season)
 # autumn spring summer winter 
-# 2591    3138    2991   2790
+# 2598    3128    2991   2790
 
-#pull out winter observations
-#winter<- subset(qld_recent, season == "winter") # 2790 records in winter 
-qld_recent$time<- paste(qld_recent$season, qld_recent$year)
-
+#manually set time order
+levels2<- c("2007 autumn", "2007 winter", "2007 spring", "2007 2008 summer", 
+            "2008 autumn", "2008 winter", "2008 spring", "2008 2009 summer", 
+            "2009 autumn", "2009 winter", "2009 spring", "2009 2010 summer",
+            "2010 autumn", "2010 winter", "2010 spring", "2010 2011 summer",
+            "2011 autumn", "2011 winter", "2011 spring", "2011 2012 summer",
+            "2012 autumn", "2012 winter", "2012 spring", "2012 2013 summer", 
+            "2013 autumn", "2013 winter", "2013 spring", "2013 2014 summer", 
+            "2014 autumn", "2014 winter", "2014 spring", "2014 2015 summer",
+            "2015 autumn", "2015 winter", "2015 spring", "2015 2016 summer",
+            "2016 autumn", "2016 winter", "2016 spring", "2016 2017 summer",
+            "2017 autumn", "2017 winter", "2017 spring", "2017 2018 summer", 
+            "2018 autumn", "2018 winter", "2018 spring", "2018 2019 summer", 
+            "2019 autumn", "2019 winter", "2019 spring", "2019 2020 summer",
+            "2020 autumn", "2020 winter", "2020 spring", "2020 2021 summer",
+            "2021 autumn", "2021 winter", "2021 spring", "2021 2022 summer")
+require(gdata)
+qld_recent$time <- reorder.factor(qld_recent$time, new.order=levels2)
 
 
 ##############################################################################################################
 #################################################### TIME ###################################################################
 
 camp_summaries_time = as.data.frame(qld_recent %>%
-                                group_by(camp.name, lat, long, time, season, year) %>%
+                                group_by(camp.name, lat, long, time, season) %>%
                                  dplyr::summarise(sample.dates = n(),
                                  sum.occ.bff = sum(bff.presence, na.rm = T), 
                                  sum.occ.ghff = sum(ghff.presence, na.rm = T),
@@ -52,50 +95,44 @@ camp_summaries_time = as.data.frame(qld_recent %>%
                                  ffpresence = max(ff.presence, na.rm = T))) %>% 
                                 as.data.frame()
 
+#camp_summaries_time$time <- reorder.factor(camp_summaries_time$time, new.order=levels2)
+
 #make binary columns for seasonal occupancy
 camp_summaries_time$pres_summr<- ifelse(camp_summaries_time$season == "summer" & camp_summaries_time$sum.occ.bff > 0, 1, 0 )
 camp_summaries_time$pres_spr<- ifelse(camp_summaries_time$season == "spring" & camp_summaries_time$sum.occ.bff > 0, 1, 0 )
 camp_summaries_time$pres_atmn<- ifelse(camp_summaries_time$season == "autumn" & camp_summaries_time$sum.occ.bff > 0, 1, 0 )
 camp_summaries_time$pres_winter<- ifelse(camp_summaries_time$season == "winter" & camp_summaries_time$sum.occ.bff > 0, 1, 0 )
-camp_summaries_time$num_ssn_occ<- rowSums(camp_summaries_time[ , c(18:21)], na.rm=TRUE)
-camp_summaries_time[,c(12,13)]<- NULL
+camp_summaries_time$num_ssn_occ<- rowSums(camp_summaries_time[ , c(17:20)], na.rm=TRUE)
+camp_summaries_time[,c(11,12, 17:20)]<- NULL
 
-#sum up the seasons occupied in one year 
-camp_summaries_time<- camp_summaries_time %>%
-                             group_by(camp.name, year) %>%
-                             dplyr::mutate(total_ssn_occ= sum(num_ssn_occ))
+#now do it and get the proportion occupancy in that season
+camp_summaries_time$pres_summr<- ifelse(camp_summaries_time$season == "summer" , camp_summaries_time$sum.occ.bff, 0 )
+camp_summaries_time$pres_spr<- ifelse(camp_summaries_time$season == "spring" , camp_summaries_time$sum.occ.bff, 0 )
+camp_summaries_time$pres_atmn<- ifelse(camp_summaries_time$season == "autumn", camp_summaries_time$sum.occ.bff, 0 )
+camp_summaries_time$pres_winter<- ifelse(camp_summaries_time$season == "winter" , camp_summaries_time$sum.occ.bff, 0 )
+#make binary columns for seasonal occupancy
+  
+  
+  
+# #sum up the seasons occupied in one year 
+# camp_summaries_time<- camp_summaries_time %>%
+#                       group_by(camp.name,year) %>%
+#                       dplyr::mutate(total_ssn_occ= sum(num_ssn_occ))
 
-table(camp_summaries_time$total_ssn_occ)
+#table(camp_summaries_time$total_ssn_occ)
 #ssns   0    1     2     3     4 
 #obs   1776  1182  1282  1199  1644
- 
+#    0    1    2    3    4    5 
+# 1909 1289 1270 1116 1082 1025 
+#  
 #find times they're not there and calc prop occupancy
-camp_summaries_time$t_bffnotocc<- camp_summaries_time$sample.dates - camp_summaries_time$sum.occ.bff
-camp_summaries_time$bffpropocc<-  camp_summaries_time$sum.occ.bff/camp_summaries_time$sample.dates
+camp_summaries_time$bffpropocc<- camp_summaries_time$sum.occ.bff/camp_summaries_time$sample.dates
 
-#manually set time order
-levels2<- c("summer 2007", "autumn 2007", "winter 2007", "spring 2007", 
-            "summer 2008", "autumn 2008", "winter 2008", "spring 2008", 
-            "summer 2009", "autumn 2009", "winter 2009", "spring 2009", 
-            "summer 2010", "autumn 2010", "winter 2010", "spring 2010", 
-            "summer 2011", "autumn 2011", "winter 2011", "spring 2011", 
-            "summer 2012", "autumn 2012", "winter 2012", "spring 2012", 
-            "summer 2013", "autumn 2013", "winter 2013", "spring 2013", 
-            "summer 2014", "autumn 2014", "winter 2014", "spring 2014", 
-            "summer 2015", "autumn 2015", "winter 2015", "spring 2015", 
-            "summer 2016", "autumn 2016", "winter 2016", "spring 2016",  
-            "summer 2017", "autumn 2017", "winter 2017", "spring 2017", 
-            "summer 2018", "autumn 2018", "winter 2018", "spring 2018", 
-            "summer 2019", "autumn 2019", "winter 2019", "spring 2019", 
-            "summer 2020", "autumn 2020", "winter 2020", "spring 2020", 
-            "summer 2021", "autumn 2021", "winter 2021", "spring 2021") 
-require(gdata)
-camp_summaries_time$time <- reorder.factor(camp_summaries_time$time, new.order=levels2)
 
 #assign the seasons sampled with a number to account for time between surveys at a roost 
 camp_summaries_time<- camp_summaries_time %>%
         arrange(time) %>% 
-            mutate(ssn_num = rleid(season))
+         mutate(ssn_num = rleid(season))
 
 
 
@@ -106,37 +143,27 @@ camp_summaries_time<- camp_summaries_time %>%
   arrange(time) %>% 
   group_by(camp.name) %>%
   dplyr::mutate(ssn_diff_lastsamp = ssn_num-lag(ssn_num),
-                yrs_diff_last_samp= year- lag(year),
                 prop_change= bffpropocc- lag(bffpropocc)) %>% 
   as.data.frame()
 camp_summaries_time$prop_change2<- ifelse(camp_summaries_time$prop_change == 0, 0, 1)
-
- 
 
 
 
 hist(camp_summaries_time$ssn_diff_lastsamp, breaks = 60)
 table(camp_summaries_time$ssn_diff_lastsamp)
 
-#subset out roost observations that weren't sampled within the last 4 seasons, so no data on seasonal trends 
-camps_1ssn_lastsamp<- subset(camp_summaries_time, ssn_diff_lastsamp == 1 ) 
-#5323/7083 (75%) seasonal observations were continually sampled in the NFFMP 
 
-camps_4ssn_lastsamp<- subset(camp_summaries_time, ssn_diff_lastsamp <= 4 )
-#6292/7083 (89%) camp ~ seasonal observations are sampled within the 4 seasons of each other 
-
-##### subset out the obervations that are sampled very  
-
-###########################
-
-
-
-
-
+#assign seasons different numbers so I can sum them in next table
+# camp_summaries_time$ssn2<- ifelse(camp_summaries_time$season == "winter", paste(1),
+#                            ifelse(camp_summaries_time$season == "spring", paste(2),
+#                           ifelse(camp_summaries_time$season == "summer", paste(3),
+#                           ifelse(camp_summaries_time$season == "autumn", paste(4), NA))))
+# camp_summaries_time$ssn2<- as.numeric(camp_summaries_time$ssn2)
 
 #cast<- dcast(camp_summaries_time, camp.name~time, value.var = "bffpropocc" )
 
 
+###############################################
 
 ###summarize the sampling by camp names
 count_roosts<- as.data.frame(camp_summaries_time %>%
@@ -152,78 +179,203 @@ count_roosts<- as.data.frame(camp_summaries_time %>%
                                sum.spring.occ = sum(pres_spr),
                                sum.autumn.occ = sum(pres_atmn),
                                sum.winter.occ = sum(pres_winter),
-                               #min_num_ssns_occ = min(total_ssn_occ),
-                               #max_num_ssns_occ = max(total_ssn_occ),
+                               # min_prop_chng = min(prop_change, na.rm = T),
+                               # max_prop_chng = max(prop_change, na.rm = T),
                                sum.occ.chng = sum(prop_change2,  na.rm = T), 
                                max.ssn.btwn.samp = max(ssn_diff_lastsamp, na.rm = T),
-                               unq.seasons= n_distinct(season),
-                               unq.years= n_distinct(year)))
+                               unq.seasons= n_distinct(season)))
 
 #count_roosts$total_prop_srvyd60= count_roosts$num_ssns_sampled/60
 count_roosts$prop.srvy.span= count_roosts$num.ssns.sampled/count_roosts$season.span.surveys
 count_roosts$bffpropocc<-  count_roosts$total.sum.occ.bff/count_roosts$num.surveys
+#########
 
-#find roosts sampled at least 10 seasons in 
-count_roosts_10ssn<- subset(count_roosts, num.ssns.sampled >= 10 )
-
-                
-ggplot(count_roosts_10ssn) +
-  geom_histogram(aes(prop.srvy.span), bins = 80) +
-  labs(x = "Proportion the roost was surveyed within the duration of sampling at roost", y = "Number of Roosts") +
-  theme_bw(base_size = 12)
-
-count_roosts_10ssn_surv75<-  subset(count_roosts_10ssn, prop.srvy.span >= 0.75)
-hist(count_roosts_10ssn_surv75$num.surveys)
-
-ggplot(count_roosts_10ssn_surv75) +
-  geom_histogram(aes(prop.srvy,span), bins = 80) +
-  labs(x = "Proportion the roost was surveyed within the duration of sampling at roost", y = "Number of Roosts") +
-  theme_bw(base_size = 12)
-
-
-##########################3
-test<- as.data.frame(camp_summaries_time %>%
+##########################
+ssn_freq<- as.data.frame(camp_summaries_time %>%
                        group_by(camp.name) %>%
                        dplyr::summarise(
-                         count(season),
-                         sum.summer.occ = sum(pres_summr),
-                         sum.spring.occ = sum(pres_spr),
-                         sum.autumn.occ = sum(pres_atmn),
-                         sum.winter.occ = sum(pres_winter),
-                         unq.seasons= n_distinct(season),
-                         unq.years= n_distinct(year)))
-colnames(test)[2]<- "season"
+                         count(season)))
+colnames(ssn_freq)[2]<- "season"
+
+#manually set time order
+levels3<- c("summer", "autumn", "winter", "spring")
+ssn_freq$season <- reorder.factor(ssn_freq$season, new.order=levels3)
+
+
+cast2<- reshape2::dcast(ssn_freq, camp.name~season, value.var = "freq" )
+colnames(cast2) = c("camp.name", "num_summers_surveyed", "num_autumns_surveyed", "num_winters_surveyed", "num_springs_surveyed")
+
+######################
+#now summarize it by sampling dates
+count_freq<- as.data.frame(camp_summaries_time %>%
+                             group_by(camp.name, season) %>%
+                             dplyr::summarise(
+                             surveys= sum(sample.dates)))
+
+count_freq$season <- reorder.factor(count_freq$season, new.order=levels3)
+cast3<- reshape2::dcast(count_freq, camp.name~season, value.var = "surveys" )
+colnames(cast3) = c("camp.name", "total_summer_visits", "total_autumn_visits", "total_winter_visits", "total_spring_visits")
+
+
+cast<- left_join(cast2, cast3, by = 'camp.name')
+ssn_roosts<- left_join(count_roosts, cast, by = 'camp.name')
 
 #make binary columns for seasonal occupancy
-test$seasonal_occ<- ifelse(test$season == "summer", test$sum.summer.occ/test$freq,
-                    ifelse(test$season == "spring", test$sum.spring.occ/test$freq,
-                    ifelse(test$season == "autumn", test$sum.autumn.occ/test$freq,
-                    ifelse(test$season == "winter", test$sum.winter.occ/test$freq, NA))))
+ssn_roosts$summer_occ= ssn_roosts$sum.summer.occ/ssn_roosts$total_summer_visits
+ssn_roosts$spring_occ<- ssn_roosts$sum.spring.occ/ssn_roosts$total_spring_visits
+ssn_roosts$autumn_occ<- ssn_roosts$sum.autumn.occ/ssn_roosts$total_autumn_visits
+ssn_roosts$winter_occ<- ssn_roosts$sum.winter.occ/ssn_roosts$total_winter_visits
+
+##### calculate number seasons 
+ssn_roosts$numssns_occ<- rowSums(ssn_roosts[c("summer_occ", "autumn_occ", "winter_occ", "spring_occ")] > 0)
+
+#don't know if this is the right metric but want something to describe number of changes relative to times surveyed
+ssn_roosts$propchng.persurv<- ssn_roosts$sum.occ.chng/ssn_roosts$num.surveys
+
+ssn_roosts<- ssn_roosts[,c(1:7,12:16,29,30,25:28, 8,17,21, 10,18,22,11,19,23,9,20,24)]
+################################################################################
+#find roosts sampled at least 10 seasons in 
+ssn_roosts_10ssn<- subset(ssn_roosts, num.ssns.sampled >= 10 )
+
+              
+quantile(ssn_roosts_10ssn$prop.srvy.span, probs = seq(0, 1, 1/4)) #change to 1/10
+#     70%         75%       80%       90%       
+# 0.7964846  0.8181818  0.8508511   0.9130435 
+
+lines = c(0.796, 0.851, 0.913)
+ggplot(ssn_roosts_10ssn) +
+  geom_histogram(aes(prop.srvy.span), bins = 80) +
+  geom_vline(xintercept =  lines, linetype="dotted", 
+             color = "tomato2", size=1.5) +
+  labs(x = "Proportion the roost was surveyed within the duration of sampling at roost", y = "Number of Roosts") +
+  theme_bw(base_size = 12)
+
+
+quantile(ssn_roosts_10ssn$bffpropocc, probs = seq(0, 1, 1/10))
+#     70%        80%        90%       
+# 0.77777778  0.87363636   0.94183007
+
+lines = c(0.777, 0.874, 0.942)
+ggplot(ssn_roosts_10ssn) +
+  geom_histogram(aes(bffpropocc), bins = 100) +
+  geom_vline(xintercept =  lines, linetype="dotted", 
+             color = "tomato2", size=1.5) +
+  labs(x = "Proportion of BFF occupancy", y = "Number of Roosts") +
+  theme_bw(base_size = 12)
+
+
+##########################################################################################
+#######now identify the ones that are sampled over 75% of the time during the sampling duration
+ssn_roosts_10ssn_surv75<-  subset(ssn_roosts_10ssn, prop.srvy.span >= 0.75)
+hist(ssn_roosts_10ssn_surv75$num.surveys)
+
+
+##get the quantiles
+quantile(ssn_roosts_10ssn_surv75$prop.srvy.span, probs = seq(0, 1, 1/4))
+#     70%         75%       80%          90%       
+#  0.9038462  0.9130435   0.9234286   0.9583333
+lines = c(0.904, 0.923, 0.958)
+ggplot(ssn_roosts_10ssn_surv75) +
+  geom_histogram(aes(prop.srvy.span), bins = 25) +
+  geom_vline(xintercept =  lines, linetype="dotted", 
+             color = "tomato2", size=1.5) +
+  labs(x = "Proportion the roost was surveyed within the duration of sampling at roost", y = "Number of Roosts") +
+  theme_bw(base_size = 12)
 
 
 
 
+###bff prop occ now 
+
+quantile(ssn_roosts_10ssn_surv75$bffpropocc, probs = seq(0, 1, 1/10)) #also change this to 1/10
+#     70%        75%        80%          90%       
+# 0.7680463  0.8076923   0.8842105   0.9528123
+
+lines = c(0.768, 0.884, 0.953)
+
+ggplot(ssn_roosts_10ssn_surv75) +
+  geom_histogram(aes(bffpropocc), bins = 100) +
+  geom_vline(xintercept =  lines, linetype="dotted", 
+             color = "tomato2", size=1.5) +
+  labs(x = "Proportion of BFF occupancy", y = "Number of Roosts") +
+  theme_bw(base_size = 12)
 
 
+quantile(ssn_roosts_10ssn_surv75$propchng.persurv, probs = seq(0, 1, 1/4)) #also change this to 1/10
+#      0%       25%       50%       75%      100% 
+# 0.0000000 0.1038961 0.2054795 0.2873563 0.4545455 
+
+##play with cutoff criteria 
+highocc_lowchng<- subset(ssn_roosts_10ssn_surv75, bffpropocc >= 0.88 & sum.occ.chng < 5) #11
+empt_lowchng<- subset(ssn_roosts_10ssn_surv75, bffpropocc < 0.20 & sum.occ.chng < 5) #11
+some_highchng<- subset(ssn_roosts_10ssn_surv75, bffpropocc > 0.20 & bffpropocc < 0.80 &  sum.occ.chng > 10) #35
 
 
+############# heat map of sampling and seasonal occupancy 
+# ggplot(ssn_roosts_10ssn_surv75, aes(x = season, y = reorder(x=camp.name,  unq.years) , fill =seasonal_occ)) +
+#   geom_tile()  +
+#   #geom_text(aes(label=prop_change2)) +
+#   labs(y = 'camp names', fill = "Seasonal occupancy") +
+#   # scale_y_discrete(drop = FALSE, labels = levels(camp_summaries_time$camp.name)[c(T, rep(F, 1))],
+#   #                  breaks = levels(camp_summaries_time$camp.name)[c(T, rep(F, 1))])  +
+#   theme_classic()+
+#   #scale_fill_manual(values = c('grey73', 'red')) +
+#   theme(legend.position = "right",
+#         axis.text.x = element_text(size = 10, angle = 80, hjust = 0.6, vjust = 0.5 )) 
 
-
-
-
-
-ggplot(count_roosts)  +
-  geom_point( aes(x = all_ssn_prop, y = bffpropocc, color = sum.occ.chng), size = 4) +
+##test tuesday
+ggplot(ssn_roosts_10ssn_surv75)  +
+  geom_point( aes(x = prop.srvy.span, y = bffpropocc, color = sum.occ.chng), size=3) +
   #geom_line( aes(x = time, y = total.occ.bff.prop), group = "year", color = "red") +
-  labs(x = "Proportion of all seasons sampled", y= "Proportion BFF Occupancy", color = "Number of occupancy changes") +
-  scale_color_gradient(high = "red", low = "grey") +
+  labs(x = "Proportion the roost was surveyed within the duration of sampling at roost", y= "Proportion BFF Occupancy all Surveys", color = "Number of occupancy changes") +
+  scale_color_gradient(high = "red", low = "grey64") +
+  geom_hline(yintercept = 0.8) +
   #scale_x_continuous(breaks = c(2007, 2009, 2011, 2013, 2015, 2017, 2019, 2021)) +
   theme_bw(base_size = 13) + 
   theme(legend.position = "bottom")
 
-##alwyas and never occupied 
-alwaysocc<- subset(count_roosts, bffpropocc == 1)
-neverocc<- subset(count_roosts, bffpropocc == 0)
+lowchng<- subset(ssn_roosts_10ssn_surv75, sum.occ.chng < 5) #24
+ggplot(lowchng)  +
+  geom_point( aes(x = prop.srvy.span, y = bffpropocc, color = sum.occ.chng), size=3) +
+  #geom_line( aes(x = time, y = total.occ.bff.prop), group = "year", color = "red") +
+  labs(x = "Proportion the roost was surveyed within the duration of sampling at roost", y= "Proportion BFF Occupancy all Surveys", color = "Number of occupancy changes") +
+  scale_color_gradient(high = "indianred", low = "grey64") +
+  geom_hline(yintercept = 0.8) +
+  #scale_x_continuous(breaks = c(2007, 2009, 2011, 2013, 2015, 2017, 2019, 2021)) +
+  theme_bw(base_size = 13) + 
+  theme(legend.position = "bottom")
+
+
+
+
+
+##this one!! 
+ggplot(ssn_roosts_10ssn_surv75)  +
+  geom_point( aes(x = num.ssns.sampled, y = bffpropocc, color = sum.occ.chng, shape = as.factor(numssns_occ)), size = 5) +
+  #geom_line( aes(x = time, y = total.occ.bff.prop), group = "year", color = "red") +
+  labs(x = "Number of seasons sampled", y= "Proportion BFF Occupancy all Surveys", color = "Number of occupancy changes", shape = "Number of seasons occupied") +
+  scale_color_gradient(high = "red", low = "grey64") +
+  scale_shape_manual(values=c(1,16, 17, 18, 15, 8)) +
+  geom_hline(yintercept = c(0.2, 0.8)) +
+  #scale_x_continuous(breaks = c(2007, 2009, 2011, 2013, 2015, 2017, 2019, 2021)) +
+  theme_bw(base_size = 13) + 
+  theme(legend.position = "bottom")
+
+
+#### not this one.. this is crazy 
+ggplot(ssn)  +
+  geom_bar( aes(x = camp.name, y = seasonal_occ, fill = season), size = 4, stat = "identity", position = "dodge", width = 0.8) +
+  #geom_line( aes(x = time, y = total.occ.bff.prop), group = "year", color = "red") +
+  labs(x = "camp.name", y= "Seasonal BFF Occupancy", color = "Season") +
+  scale_fill_manual(values = c( "red", "orange", "blue", "forestgreen")) +
+  #scale_x_continuous(breaks = c(2007, 2009, 2011, 2013, 2015, 2017, 2019, 2021)) +
+  theme_bw(base_size = 13) + 
+  theme(legend.position = "bottom")
+
+
+
+
+
 
 
 #####################
