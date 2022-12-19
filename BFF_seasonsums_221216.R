@@ -6,6 +6,7 @@ library(dplyr) #manipulating dfs
 library(ggplot2)
 library(stringr)
 library(tidyr)
+library(tidyverse)
 library(reshape2)
 library(gridExtra)
 library(lubridate)
@@ -93,20 +94,114 @@ qld_recent$pres_change2<- ifelse(qld_recent$presence_change != 0, 1, 0)
 qld_recent$bff.presence <- qld_recent$bff.presence %>% replace_na(0)
 
 
-############### summarise the change in occupancy by season
-#calculate the change in time and change in occupancy 
-qld_recent<- qld_recent %>% 
-  arrange(time) %>% 
-  group_by(camp.name, season) %>%
-  dplyr::mutate(ssn_pres_change= bff.presence- lag(bff.presence)) %>% 
-  as.data.frame()
-qld_recent$ssn_pres_change2<- ifelse(qld_recent$ssn_pres_change!= 0, 1, 0)
+#################################################### Seasonal sums ###################################################################
+winter<- subset(qld_recent, season == "winter")
+autumn<- subset(qld_recent, season == "autumn")
+spring<- subset(qld_recent, season == "spring")
+summer<- subset(qld_recent, season == "summer")
 
+winter_sums = as.data.frame(winter %>%
+                  arrange(time) %>%
+                  group_by(camp.name) %>%
+                  dplyr::summarise(
+                  num.wint.sampled = n_distinct(time),
+                  wint.sample.dates = n(),
+                  sum.wint.occ.bff = sum(bff.presence, na.rm = T),
+                  sum.wint.chng = sum(pres_change2, na.rm = T))) 
+
+
+spring_sums = as.data.frame(spring %>%
+                   arrange(time) %>%
+                   group_by(camp.name) %>%
+                   dplyr::summarise(
+                   num.spr.sampled = n_distinct(time),
+                   spr.sample.dates = n(),
+                   sum.spr.occ.bff = sum(bff.presence, na.rm = T),
+                    sum.spr.chng = sum(pres_change2, na.rm = T))) 
+
+autumn_sums = as.data.frame(autumn %>%
+                    arrange(time) %>%
+                    group_by(camp.name) %>%
+                    dplyr::summarise(
+                    num.autm.sampled = n_distinct(time),
+                    autm.sample.dates = n(),
+                    sum.autm.occ.bff = sum(bff.presence, na.rm = T), 
+                    sum.atumn.chng = sum(pres_change2, na.rm = T))) 
+
+
+summer_sums = as.data.frame(summer %>%
+                      arrange(time) %>%
+                      group_by(camp.name) %>%
+                      dplyr::summarise(
+                       num.summr.sampled = n_distinct(time),
+                       summr.sample.dates = n(),
+                       sum.summr.occ.bff = sum(bff.presence, na.rm = T), 
+                       sum.summr.chng = sum(pres_change2, na.rm = T))) 
+
+#merge all the dataframes together
+ssn_list <- list(summer_sums, autumn_sums, winter_sums, spring_sums)      
+
+#merge all data frames together
+ssns<- ssn_list %>% reduce(full_join, by='camp.name')
+
+ssns$sum.occ.chngs<- rowSums(ssns[ ,c(5,9,13,17)], na.rm=TRUE)
+
+
+ssns<- ssns[,c(1, 5,9,13,17,18,2:4,6:8,10:12,14:16)]
+
+#subset roosts that are sampled a minimum of 3 of each season
+ssns_min3<- subset(ssns,  num.summr.sampled >=3 & num.autm.sampled >=3 & num.wint.sampled >=3 &num.spr.sampled >=3  )
+
+a<- ggplot(ssns_min3) +
+  geom_histogram(aes(x=sum.summr.chng), fill ="red", bins=12) +
+  xlab("Number of summer occupancy changes") +
+  theme_bw(base_size = 12)
+
+b<-ggplot(ssns_min3) +
+  geom_histogram(aes(x=sum.atumn.chng), fill ="orange", bins=12) +
+  xlab("Number of autumn occupancy changes") +
+  theme_bw(base_size = 12)
+
+c<-ggplot(ssns_min3) +
+  geom_histogram(aes(x=sum.wint.chng), fill ="blue", bins=12) +
+  xlab("Number of winter occupancy changes") +
+  theme_bw(base_size = 12)
+
+d<-ggplot(ssns_min3) +
+  geom_histogram(aes(x=sum.spr.chng), fill ="forestgreen", bins=12) +
+  xlab("Number of spring occupancy changes") +
+  theme_bw(base_size = 12)
+
+grid.arrange(a,b,c,d, ncol=1)
+
+
+
+quantile(ssns_min3$sum.occ.chngs , probs = seq(0, 1, 1/10))
+# 0%  25%  50%  75% 100% 
+# 0    4    7   13   36 
+#  0%  10%  20%  30%  40%  50%  60%   70%   80%   90%  100% 
+# 0.0  1.9  3.0  4.0  6.0  7.0  9.0  11.3  14.0  19.1  36.0 
+
+ggplot(ssns_min3) +
+  geom_histogram(aes(x=sum.occ.chngs), fill ="grey37", bins=36) +
+  xlab("Number of total occupancy changes") +
+  geom_vline(xintercept = 4, color = "red", linetype = "dashed") +
+  theme_bw(base_size = 12)
+
+##look for rroosts that at least get surveyed each season so has no NA in the change columns
+#t<- ssns %>% drop_na(c(sum.summr.chng, sum.atumn.chng, sum.wint.chng, sum.spr.chng))
+
+
+##pick arbitrary cut offs to see how data looks 
+stable_min3<- subset(ssns_min3, sum.occ.chngs <=3 )
+
+#unstable<- subset(ssns_min3,sum.summr.chng >=3 & sum.atumn.chng >=3 & sum.wint.chng >=3 & sum.spr.chng >=3 )
 
 ##############################################################################################################
 #################################################### TIME ###################################################################
 
 camp_summaries_time = as.data.frame(qld_recent %>%
+                      arrange(time) %>%
                        group_by(camp.name, lat, long, time, season, ssn_num) %>%
                                  dplyr::summarise(sample.dates = n(),
                                  sum.occ.bff = sum(bff.presence, na.rm = T), 
@@ -120,11 +215,17 @@ camp_summaries_time = as.data.frame(qld_recent %>%
                                  mean.count.bff = mean(bff.count, na.rm = T),
                                  ffpresence = max(ff.presence),
                                  bffpresence = max(bff.presence),
-                                 sum.occ.chng = sum(pres_change2), 
-                                 sum.ssn.chngs = sum(ssn_pres_change2),
                                  max.ssn.btwn.samp = max(ssn_diff_lastsamp))) 
 
 
+
+
+
+
+
+
+
+###see if this is even necessary anymore 
 
 #make binary columns for seasonal occupancy
 camp_summaries_time$pres_summr<- ifelse(camp_summaries_time$season == "summer" & camp_summaries_time$sum.occ.bff > 0, 1, 0 )
@@ -133,54 +234,43 @@ camp_summaries_time$pres_atmn<- ifelse(camp_summaries_time$season == "autumn" & 
 camp_summaries_time$pres_winter<- ifelse(camp_summaries_time$season == "winter" & camp_summaries_time$sum.occ.bff > 0, 1, 0 )
 
 #collapse rows to show binary seasonal presence
-camp_summaries_time$num_ssn_occ<- rowSums(camp_summaries_time[ ,c(22:25)])
+camp_summaries_time$num_ssn_occ<- rowSums(camp_summaries_time[ ,c(20:23)])
 
 #make a dataframe with the roost and seasons and binary occupancy factors
-binary_presencedf<- camp_summaries_time[,c(1:5, 22:26)]
+#binary_presencedf<- camp_summaries_time[,c(1:5, 22:26)]
 
 ##take out the binary season columns 
-camp_summaries_time[,c(12,13,22:25)]<- NULL
+camp_summaries_time[,c(9,10,20:23)]<- NULL
 
-#now do it and get the proportion occupancy in that season
-camp_summaries_time$pres_summr<- ifelse(camp_summaries_time$season == "summer" , camp_summaries_time$sum.occ.bff, 0 )
-camp_summaries_time$pres_spr<- ifelse(camp_summaries_time$season == "spring" , camp_summaries_time$sum.occ.bff, 0 )
-camp_summaries_time$pres_atmn<- ifelse(camp_summaries_time$season == "autumn", camp_summaries_time$sum.occ.bff, 0 )
-camp_summaries_time$pres_winter<- ifelse(camp_summaries_time$season == "winter" , camp_summaries_time$sum.occ.bff, 0 )
+# #now do it and get the proportion occupancy in that season
+# camp_summaries_time$pres_summr<- ifelse(camp_summaries_time$season == "summer" , camp_summaries_time$sum.occ.bff, 0 )
+# camp_summaries_time$pres_spr<- ifelse(camp_summaries_time$season == "spring" , camp_summaries_time$sum.occ.bff, 0 )
+# camp_summaries_time$pres_atmn<- ifelse(camp_summaries_time$season == "autumn", camp_summaries_time$sum.occ.bff, 0 )
+# camp_summaries_time$pres_winter<- ifelse(camp_summaries_time$season == "winter" , camp_summaries_time$sum.occ.bff, 0 )
 #make binary columns for seasonal occupancy
   
-
 
 # #sum up the seasons occupied across all 60 
 camp_summaries_time<- camp_summaries_time %>%
                       group_by(camp.name) %>%
                       dplyr::mutate(total_ssns_occ= sum(bffpresence))
 
- 
-#   
-#find times they're not there and calc prop occupancy
-#camp_summaries_time$bffprop.occ.visits<- camp_summaries_time$sum.occ.bff/camp_summaries_time$sample.dates
-
-
-
-#cast<- dcast(camp_summaries_time, camp.name~time, value.var = "bffpropocc" )
-
-
-############################################################################
-#now calculate change in proportion from last year of same season 
-# camp_summaries_time<- camp_summaries_time %>% 
-#   arrange(time) %>% 
-#   group_by(season) %>%
-#   dplyr::mutate(prop_change_smssn= bffpropocc- lag(bffpropocc)) %>% 
-#   as.data.frame()
-# 
-# camp_summaries_time$prop_chang_ssn<- ifelse(camp_summaries_time$prop_change_smssn== 0, 0, 1)
-
-
-# hist(camp_summaries_time$ssn_diff_lastsamp, breaks = 60)
-# table(camp_summaries_time$ssn_diff_lastsamp)
-
-
 camp_summaries_time$time <- reorder.factor(camp_summaries_time$time, new.order=levels2) #manually set time levels
+
+stable_sums<- merge(camp_summaries_time, stable_min3, by = "camp.name", all.y = T)
+allmin3_sums<- merge(camp_summaries_time, ssns_min3, by = "camp.name", all.y = T)
+
+
+ggplot(allmin3_sums) +
+  geom_line(aes(x = time, y = bffpresence,  group = camp.name),color = "purple3", size =1) +
+  theme_bw(base_size = 9) +
+  scale_y_continuous(breaks = c(0,1))+
+  facet_wrap(facets = ~reorder(camp.name, sum.occ.chngs), ncol = 20) +
+  scale_x_discrete(drop = FALSE, labels = levels(camp_summaries_time$time)[c(T, rep(F, 1))],
+                   breaks = levels(camp_summaries_time$time)[c(T, rep(F, 1))])  +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 85, vjust =0.90,  hjust=0.90 )) 
+
+
 
 
 ###############################################
@@ -191,21 +281,13 @@ count_roosts <- as.data.frame(camp_summaries_time %>%
                                group_by(camp.name) %>%
                                dplyr::summarise(
                                num.ssns.occ = max(total_ssns_occ),
-                               sum.occ.tchanges = sum(sum.occ.chng,  na.rm = T),
-                               sum.occ.schanges = sum(sum.ssn.chngs,  na.rm = T),
                                num.ssns.sampled = n_distinct(time),
                                #ssn.prop.occ = num.ssns.occ/num.ssns.sampled,
                                season.span.surveys = last(ssn_num) - first(ssn_num) + 1,
                                first.ssn = first(time),
                                last.ssn = last(time),
                                num.surveys = sum(sample.dates),
-                               total.sum.occ.bff = sum(sum.occ.bff, na.rm = T),
-                               # max.ssn.occ= max(total_ssn_occ, na.rm = T),
-                               # min.ssn.occ= min(total_ssn_occ, na.rm = T),
-                               numsurv.occ.summer = sum(pres_summr),
-                               numsurv.occ.spring = sum(pres_spr),
-                               numsurv.occ.autumn = sum(pres_atmn),
-                               numsurv.occ.winter = sum(pres_winter)))
+                               total.sum.occ.bff = sum(sum.occ.bff, na.rm = T)))
 
 
 
@@ -213,97 +295,7 @@ count_roosts <- as.data.frame(camp_summaries_time %>%
 count_roosts$prop.srvy.span= count_roosts$num.ssns.sampled/count_roosts$season.span.surveys
 count_roosts$bffprop.occ.survs<-  count_roosts$total.sum.occ.bff/count_roosts$num.surveys
 
-###################################################################################################
-###################################################################################################
-########################## quantify how many times 
-
-ssn_freq_long<- as.data.frame(camp_summaries_time %>%
-                             group_by(camp.name) %>%
-                             count(season))
-
-
-colnames(ssn_freq_long)[2]<- "season"
-colnames(ssn_freq_long)[3]<- "ssns_surveyed"
-
-#manually set time order
-levels3<- c("summer", "autumn", "winter", "spring")
-ssn_freq_long$season <- reorder.factor(ssn_freq_long$season, new.order=levels3)
-
-
-ssn_freq_short<- reshape2::dcast(ssn_freq_long, camp.name~season, value.var = "ssns_surveyed" )
-colnames(ssn_freq_short) = c("camp.name", "num_summers_visited", "num_autumns_visited", "num_winters_visited", "num_springs_visited")
-
-######################
-#now summarize it by sampling dates
-count_freq_long<- as.data.frame(camp_summaries_time %>%
-                             group_by(camp.name, season) %>%
-                             dplyr::summarise(
-                             surveys= sum(sample.dates)))
-
-
-count_freq_long$season <- reorder.factor(count_freq_long$season, new.order=levels3)
-count_freq_short<- reshape2::dcast(count_freq_long, camp.name~season, value.var = "surveys" )
-colnames(count_freq_short) = c("camp.name", "total_summer_surveys", "total_autumn_surveys", "total_winter_surveys", "total_spring_surveys")
-
-
-#now summarize it by sampling dates
-occ_freq_long<- as.data.frame(camp_summaries_time %>%
-                                  group_by(camp.name, season) %>%
-                                  dplyr::summarise(
-                                  occupied= sum(sum.occ.bff)))
-
-
-
-occ_freq_long$season <- reorder.factor(occ_freq_long$season, new.order=levels3)
-occ_freq_short<- reshape2::dcast(occ_freq_long, camp.name~season, value.var = "occupied" )
-colnames(occ_freq_short) = c("camp.name", "occ_summer_surveys", "occ_autumn_surveys", "occ_winter_surveys", "occ_spring_surveys")
-
-
-#now summarize it by sampling dates
-occ_ssn_long<- as.data.frame(camp_summaries_time %>%
-                                group_by(camp.name, season) %>%
-                                dplyr::summarise(
-                                ssn.occupied= sum(num_ssn_occ)))
-
-
-
-occ_ssn_long$season <- reorder.factor(occ_ssn_long$season, new.order=levels3)
-occ_ssn_short<- reshape2::dcast(occ_ssn_long, camp.name~season, value.var = "ssn.occupied" )
-colnames(occ_ssn_short) = c("camp.name", "num_summer_occ", "num_autumn_occ", "num_winter_occ", "num_spring_occ")
-
-
-
-######## THIS DATAFRAME!!! long version with all the seaons sampled and occupied tallied nicely 
-frequencies_long <- occ_freq_long %>%
-  left_join(count_freq_long, by = c('camp.name', "season"))  %>%
-  left_join(occ_ssn_long,  by = c('camp.name', "season")) %>%
-  left_join(ssn_freq_long, by = c('camp.name', "season"))
-
-frequencies_short<- occ_freq_short %>%
-  left_join(count_freq_short, by = 'camp.name')  %>%
-  left_join(occ_ssn_short, by = 'camp.name') %>%
-  left_join(ssn_freq_short, by = 'camp.name')
-#frequencies_short<- left_join(ssn_freq_short,count_freq_short, by = 'camp.name')
-frequencies_long$ssn.occ<- frequencies_long$ssn.occupied/frequencies_long$ssns_surveyed
-frequencies_long$surv.occ<- frequencies_long$occupied/frequencies_long$surveys
-
-#freq_three_ssns<-subset(frequencies_long, ssns_surveyed >=3) #this is wrong, fix this 
-
-# df<-as.data.frame(frequencies_long  %>%
-#                     group_by(camp.name) %>%
-#                     dplyr::summarise(min.surv= min(ssns_surveyed),
-#                                      max.surv = max(ssns_surveyed)))
-
-minmax_freq <- frequencies_long  %>%
-                  group_by(camp.name) %>%
-                  dplyr::summarise(min.surv= min(ssns_surveyed),
-                                   max.surv = max(ssns_surveyed),
-                                   min.ssn.occ= min(ssn.occ),
-                                   max.ssn.occ = max(ssn.occ))
-
-min_three_ssns<- subset(maxmin_freq, min.surv >=3)
-
-
+stablemin3_roosts<- merge(count_roosts, stable_min3, by = "camp.name", all.y = T)
 ##############
 ###THIS ONE! identify roosts taht have at least 3 seasons of each season with surveys
 roosts_min_3ssns<- merge(frequencies_long, min_three_ssns, by = "camp.name", all.y=T)
