@@ -124,8 +124,6 @@ camp_summaries_time = as.data.frame(qld_recent %>%
                                  sum.ssn.chngs = sum(ssn_pres_change2),
                                  max.ssn.btwn.samp = max(ssn_diff_lastsamp))) 
 
-#sum up the seasons occupied in one year
-
 
 
 #make binary columns for seasonal occupancy
@@ -248,9 +246,90 @@ count_freq_short<- reshape2::dcast(count_freq_long, camp.name~season, value.var 
 colnames(count_freq_short) = c("camp.name", "total_summer_surveys", "total_autumn_surveys", "total_winter_surveys", "total_spring_surveys")
 
 
-frequencies_long<- left_join(ssn_freq_long,count_freq_long, by = c('camp.name', "season"))
-frequencies_short<- left_join(ssn_freq_short,count_freq_short, by = 'camp.name')
-ssn_roosts<- left_join(count_roosts, frequencies, by = 'camp.name')
+#now summarize it by sampling dates
+occ_freq_long<- as.data.frame(camp_summaries_time %>%
+                                  group_by(camp.name, season) %>%
+                                  dplyr::summarise(
+                                  occupied= sum(sum.occ.bff)))
+
+
+
+occ_freq_long$season <- reorder.factor(occ_freq_long$season, new.order=levels3)
+occ_freq_short<- reshape2::dcast(occ_freq_long, camp.name~season, value.var = "occupied" )
+colnames(occ_freq_short) = c("camp.name", "occ_summer_surveys", "occ_autumn_surveys", "occ_winter_surveys", "occ_spring_surveys")
+
+
+#now summarize it by sampling dates
+occ_ssn_long<- as.data.frame(camp_summaries_time %>%
+                                group_by(camp.name, season) %>%
+                                dplyr::summarise(
+                                ssn.occupied= sum(num_ssn_occ)))
+
+
+
+occ_ssn_long$season <- reorder.factor(occ_ssn_long$season, new.order=levels3)
+occ_ssn_short<- reshape2::dcast(occ_ssn_long, camp.name~season, value.var = "ssn.occupied" )
+colnames(occ_ssn_short) = c("camp.name", "num_summer_occ", "num_autumn_occ", "num_winter_occ", "num_spring_occ")
+
+
+
+######## THIS DATAFRAME!!! long version with all the seaons sampled and occupied tallied nicely 
+frequencies_long <- occ_freq_long %>%
+  left_join(count_freq_long, by = c('camp.name', "season"))  %>%
+  left_join(occ_ssn_long,  by = c('camp.name', "season")) %>%
+  left_join(ssn_freq_long, by = c('camp.name', "season"))
+
+frequencies_short<- occ_freq_short %>%
+  left_join(count_freq_short, by = 'camp.name')  %>%
+  left_join(occ_ssn_short, by = 'camp.name') %>%
+  left_join(ssn_freq_short, by = 'camp.name')
+#frequencies_short<- left_join(ssn_freq_short,count_freq_short, by = 'camp.name')
+frequencies_long$ssn.occ<- frequencies_long$ssn.occupied/frequencies_long$ssns_surveyed
+frequencies_long$surv.occ<- frequencies_long$occupied/frequencies_long$surveys
+
+#freq_three_ssns<-subset(frequencies_long, ssns_surveyed >=3) #this is wrong, fix this 
+
+# df<-as.data.frame(frequencies_long  %>%
+#                     group_by(camp.name) %>%
+#                     dplyr::summarise(min.surv= min(ssns_surveyed),
+#                                      max.surv = max(ssns_surveyed)))
+
+minmax_freq <- frequencies_long  %>%
+                  group_by(camp.name) %>%
+                  dplyr::summarise(min.surv= min(ssns_surveyed),
+                                   max.surv = max(ssns_surveyed),
+                                   min.ssn.occ= min(ssn.occ),
+                                   max.ssn.occ = max(ssn.occ))
+
+min_three_ssns<- subset(maxmin_freq, min.surv >=3)
+
+
+##############
+###THIS ONE! identify roosts taht have at least 3 seasons of each season with surveys
+roosts_min_3ssns<- merge(frequencies_long, min_three_ssns, by = "camp.name", all.y=T)
+#roosts_min_3ssns<- merge(frequencies_long, min_three_ssns, by = "camp.name", all.y=T)
+
+####plotting 
+ggplot(roosts_min_3ssns) +
+  geom_bar(aes(x = reorder(camp.name, ssns_surveyed), y=ssn.occ, fill = season), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c( "red", "orange", "blue", "forestgreen")) +
+  #geom_vline(xintercept =  lines, linetype="dotted", 
+            # color = "tomato2", size=1.5) +
+  labs(t = "Proportion of Seasonal Occupancy", x = "") +
+  theme_bw(base_size = 12)
+
+#subset where occupancy in all seasons is 1 
+alwaysocc<- subset(roosts_min_3ssns, min.ssn.occ ==1)
+
+middle<- subset(roosts_min_3ssns, min.ssn.occ <1 & min.ssn.occ)
+## still dont think I did the seasonal change right, come bak to it tomorrow or sunday 
+
+
+
+
+
+
+ssn_roosts<- left_join(count_roosts, frequencies_short, by = 'camp.name')
 
 #calculate the seasonal proportion of occupancy based on number of surveys
 ssn_roosts$prop.summer.surv.occ= ssn_roosts$numsurv.occ.summer/ssn_roosts$total_summer_surveys
@@ -263,6 +342,11 @@ ssn_roosts$numssns_occ<- rowSums(ssn_roosts[c("numsurv.occ.summer", "numsurv.occ
 
 #calculate the seasonal proportion of occupancy based on number of surveys
 ssn_roosts$prop.ssns.occ<- ssn_roosts$num.ssns.occ/ssn_roosts$num.ssns.sampled
+
+
+############33    START HERE1!!!!!!! ####### fix ssn change column as well 
+### ssn_roosts needs to be reordered and cut, but its the mega dataframe 
+
 
 
 #don't know if this is the right metric but want something to describe number of changes relative to times surveyed
