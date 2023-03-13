@@ -12,11 +12,13 @@ library(gridExtra)
 library(lubridate)
 library(gdata)
 library(data.table)
+library(zoo)
 
 ##########################################################
 #importing data for QLD roost locations 
 qld<- read.csv("cleaned_qld_ff_data_Apr03_Mar22_kb_20221129.csv", header = T, stringsAsFactors = F)
 
+qld[,c(1,7,11,13,19)]<- NULL 
 #specify date format and add factor year column
 #qld$date2 <- as.Date(qld$date, format = '%Y-%m-%d')
 dates_fix<- parse_date_time(x = qld$date,
@@ -48,7 +50,7 @@ summer_roosts$time<- ifelse(summer_roosts$month == 01, paste(summer_roosts$year2
                      NA)))
 
 summer_roosts$time<- as.factor(summer_roosts$time)
-summer_roosts[24]<- NULL
+summer_roosts[19]<- NULL
 
 #pull out other seasons that don't cross over years and make time column 
 other_roosts<- subset(qld, season != "summer")
@@ -60,110 +62,129 @@ str(allroosts)
 
 ##########################################
 # #only consider roosts after 2013
-qld_recent<- subset(allroosts, allroosts$date > "2006-12-30" & date < "2022-03-01")  #11500
+qld_recent<- subset(allroosts, allroosts$date > "2006-12-30" & date < "2019-03-01")  #11500
 
-qld_recent$yearmon = format(as.character(format(qld_recent$date, format = "%Y-%m")))
+sum(is.na(qld_recent$ff.absence)) ##61,the last survey doesn't include it, run column calc again
+qld_recent$ff.absence<- ifelse(qld_recent$ff.count > 0, "FALSE", "TRUE")
 
-#add in abbreviations for month name 
-qld_recent$mon <-month.abb[qld_recent$month]
-#fix month order
-levels<- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-qld_recent$mon <- reorder.factor(qld_recent$mon, new.order=levels)
+#complete missing year-months  for each roost with zoo
+qld_recent_fill<- qld_recent%>%
+  group_by(camp.name) %>%
+  mutate(yr_month = as.yearmon(date)) %>%
+  arrange(date) %>%
+  complete(yr_month = seq(first(yr_month), last(yr_month), by = 1 / 12))
 
-##fill in all the months in between FF surveys (~180 between 2007 and 2022)
-times<-read.csv("fulltimesJan2007Dec2022.csv", header = T)
-times$month2<- sprintf("%02d", as.numeric(times$month))
-times$yearmon= paste(times$year, sep = "-",times$month2 )
-
-##assign season numbers 
-times <- times %>%
-  arrange(yearmon) %>% 
-  mutate(month_num = rleid(yearmon))
-
-
-qld_alltimes<- merge(qld_recent, times, by = c("year", "month", "month2", "yearmon"), all=T)
-
+#fill the other columns  with the information that  doesn't change with time 
+qld_recent_fill<-qld_recent_fill %>% group_by(camp.name) %>% fill("lat", "long")
 
 #some obs have NA for  bff.presence but by ff.counts & ghff counts  we know BFF were absent
-qld_alltimes$bff.presence <- qld_alltimes$bff.presence %>% replace_na(0)
+qld_recent_fill$bff.presence <- qld_recent_fill$bff.presence %>% replace_na(0)
 
-##assign season numbers 
-qld_alltimes<- qld_alltimes %>%
+##FILL other variables that will be useful 
+qld_recent_fill$ff.absence <-as.character(qld_recent_fill$ff.absence)
+qld_recent_fill$ff.absence <- qld_recent_fill$ff.absence %>% replace_na("Unknown")
+
+#fill  in all relevant time variables for unsurveyed months 
+qld_recent_fill$year<- as.numeric(format(qld_recent_fill$yr_month, "%Y"))
+qld_recent_fill$month<- as.numeric(format(qld_recent_fill$yr_month, "%m"))
+qld_recent_fill$month2<- sprintf("%02d", as.numeric(qld_recent_fill$month))
+
+qld_recent_fill$season <- ifelse(qld_recent_fill$month == 12 |  qld_recent_fill$month == 1 | qld_recent_fill$month == 2 , paste("summer"),
+                    ifelse(qld_recent_fill$month == 3 |  qld_recent_fill$month == 4 | qld_recent_fill$month == 5 , paste("autumn"),
+                  ifelse(qld_recent_fill$month == 6 |  qld_recent_fill$month == 7 | qld_recent_fill$month == 8 , paste("winter"),
+                   ifelse(qld_recent_fill$month == 9 |  qld_recent_fill$month == 10 |qld_recent_fill$month == 11 , paste("spring"),
+                           NA))))
+qld_recent_fill$time<- as.factor(paste(qld_recent_fill$year, qld_recent_fill$season))
+
+#add in month number 
+qld_recent_fill<- qld_recent_fill %>%
   arrange(date) %>% 
-  mutate(ssn_num = rleid(season),
-         ssn_diff_lastsamp = ssn_num-lag(ssn_num))
+  mutate(month_num = rleid(yr_month))
+
 
 ##assign difference in days between surveys at same camp  
-qld_alltimes<- qld_alltimes %>%
+qld_recent_fill<- qld_recent_fill%>%
   arrange(date) %>%
   group_by(camp.name) %>%
-  mutate(diff_date = c(0,diff(date)),
+  mutate(diff_days = c(0,diff(date)),
          diff_month = c(0,diff(month_num)),
          presence_change= bff.presence- lag(bff.presence))
 
+#for some reaosn presence change gets a 0 instead of NA, fix tomorrow 
+
+
+
+# #add in abbreviations for month name 
+# qld_recent$mon <-month.abb[qld_recent$month]
+# #fix month order
+# levels<- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+# qld_recent$mon <- reorder.factor(qld_recent$mon, new.order=levels)
+# 
+# 
+
+
+
+#month_fill$presence_change<- if(month_fill$ff.absence == "Unknown", 5)
+month_fill$presence_change[month_fill$ff.absence == "Unknown"] <- 5
+month_fill$bff.presence [month_fill$ff.absence == "Unknown"] <- 0.5
+
 #replace NAs from new roost surveys to a 9 to represent new roost survey in numeric 
-qld_alltimes$presence_change <- qld_alltimes$presence_change %>% replace_na(9)
+month_fill$presence_change <- month_fill$presence_change %>% replace_na(9)
 
 
-table(qld_alltimes$year)
+#check some extra missing values and NAs
+table(month_fill$year)
 # 2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 
 #  322  462  765  978 1130 1334 1423 1198  534  487  437  357  568  661  688  175 
 
-table(qld_alltimes$season)
+table(month_fill$season)
 # autumn spring summer winter 
-# 2598    3128    2991   2790
+# 2589    3128    2991   2790
 
 
 #make binary column of change or no change 
-qld_alltimes$pres_change2<- ifelse(qld_alltimes$presence_change != 0, 1, 0)
+month_fill$pres_change2<- ifelse(month_fill$presence_change != 0, 1, 0)
 
 
-#fill in the dataframe with the 'hold' roosts in between months they weren't checked 
-f<- unique(qld_alltimes[c("camp.name", "yearmon", "year", "month2")])
- 
 
-##fill in the years for all the roosts so I can find 'hold' roosts 
-f<- f%>%
-  complete(year, month2)
-
-f$status<- ifelse(is.na(f$yearmon), "hold", "surveyed")
-#fill in the times not sampled at each roost 
-t<- merge(qld_alltimes, f, by = c("camp.name", "yearmon","year","month2"), all = T)
+levels3<- c("summer", "autumn", "winter", "spring")
+month_fill$season <- reorder.factor(month_fill$season, new.order=levels3)
 
 
 
 
+month_fill$yearmon<- as.character(month_fill$yr_month)
 #################################################### Seasonal sums ###################################################################
-winter<- subset(qld_recent, season == "winter")
-autumn<- subset(qld_recent, season == "autumn")
-spring<- subset(qld_recent, season == "spring")
-summer<- subset(qld_recent, season == "summer")
+winter<- subset(month_fill, season == "winter")
+autumn<- subset(month_fill, season == "autumn")
+spring<- subset(month_fill, season == "spring")
+summer<- subset(month_fill, season == "summer")
 
 winter_sums = as.data.frame(winter %>%
-                  arrange(time) %>%
+                  arrange(date) %>%
                   group_by(camp.name) %>%
                   dplyr::summarise(
-                  num.wint.sampled = n_distinct(time),
+                  num.wint.sampled = n_distinct(yearmon),
                   wint.sample.dates = n(),
                   sum.wint.occ.bff = sum(bff.presence, na.rm = T),
                   sum.wint.chng = sum(pres_change2, na.rm = T),
                   max.wint.bff.pres = max(bff.presence))) 
 
 spring_sums = as.data.frame(spring %>%
-                   arrange(time) %>%
+                   arrange(date) %>%
                    group_by(camp.name) %>%
                    dplyr::summarise(
-                   num.spr.sampled = n_distinct(time),
+                   num.spr.sampled = n_distinct(yearmon),
                    spr.sample.dates = n(),
                    sum.spr.occ.bff = sum(bff.presence, na.rm = T),
                     sum.spr.chng = sum(pres_change2, na.rm = T),
                    max.spr.bff.pres = max(bff.presence))) 
 
 autumn_sums = as.data.frame(autumn %>%
-                    arrange(time) %>%
+                    arrange(date) %>%
                     group_by(camp.name) %>%
                     dplyr::summarise(
-                    num.autm.sampled = n_distinct(time),
+                    num.autm.sampled = n_distinct(yearmon),
                     autm.sample.dates = n(),
                     sum.autm.occ.bff = sum(bff.presence, na.rm = T), 
                     sum.atumn.chng = sum(pres_change2, na.rm = T),
@@ -171,10 +192,10 @@ autumn_sums = as.data.frame(autumn %>%
 
 
 summer_sums = as.data.frame(summer %>%
-                      arrange(time) %>%
+                      arrange(date) %>%
                       group_by(camp.name) %>%
                       dplyr::summarise(
-                       num.summr.sampled = n_distinct(time),
+                       num.summr.sampled = n_distinct(yearmon),
                        summr.sample.dates = n(),
                        sum.summr.occ.bff = sum(bff.presence, na.rm = T), 
                        sum.summr.chng = sum(pres_change2, na.rm = T),
@@ -186,7 +207,7 @@ ssn_list <- list(summer_sums, autumn_sums, winter_sums, spring_sums)
 #merge all data frames together
 ssns<- ssn_list %>% reduce(full_join, by='camp.name')
 
-ssns$sum.ssn.occ.chngs<- rowSums(ssns[ ,c(5,10,15,20)], na.rm=TRUE)
+ssns$sum.time.occ.chngs<- rowSums(ssns[ ,c(5,10,15,20)], na.rm=TRUE)
 
 #reorder variables
 ssns2<- ssns[,c(1, 5,10,15,20,17:19,21,2:4,6,7:9,11:14,16,22)]
@@ -195,6 +216,8 @@ ssns2<- ssns[,c(1, 5,10,15,20,17:19,21,2:4,6,7:9,11:14,16,22)]
 ssns_min3<- subset(ssns2,  num.summr.sampled >=3 & num.autm.sampled >=3 & num.wint.sampled >=3 &num.spr.sampled >=3  )
 ssns_min3$num.times.occ<- rowSums(ssns_min3[ ,c(8,12,16,20)], na.rm=TRUE)
 #ssns_min3$num.times.occ<- rowSums(ssns_min3[ ,c(9,12,15,18)], na.rm=TRUE)
+
+
 
 ##STOP
 winter_split<- split(winter, f=list(winter$year,winter$month2))
@@ -209,30 +232,12 @@ t<-winter %>%
   group_by(month, month2, year, presence_change ) %>%
 reframe(sum_changes= sum(presence_change, na.rm = T))
 
-####
-# 
-# camp_summaries_time = as.data.frame(qld_recent %>%
-#                       arrange(time) %>%
-#                        group_by(camp.name, lat, long, time, season, ssn_num) %>%
-#                                  dplyr::summarise(sample.dates = n(),
-#                                  sum.occ.bff = sum(bff.presence, na.rm = T), 
-#                                  sum.occ.ghff = sum(ghff.presence, na.rm = T),
-#                                  sum.occ.lrff = sum(lrff.presence, na.rm = T), 
-#                                  sum.count.bff = sum(bff.count, na.rm = T),
-#                                  sum.count.ghff = sum(ghff.count, na.rm = T), 
-#                                  sum.count.lrff = sum(lrff.count, na.rm = T), 
-#                                  min.count.bff = min(bff.count), 
-#                                  max.count.bff = max(bff.count), 
-#                                  mean.count.bff = mean(bff.count, na.rm = T),
-#                                  ffpresence = max(ff.presence),
-#                                  bffpresence = max(bff.presence),
-#                                  time.occ.chngs = sum(pres_change2, na.rm = T),
-#                                  max.ssn.btwn.samp = max(ssn_diff_lastsamp))) 
+###############
 
 ####### month exploration 
 camp_summaries_month = as.data.frame(qld_recent %>%
-                        arrange(time) %>%
-                        group_by(camp.name, lat, long, yearmon, year, month, month2, season, ssn_num) %>%
+                        arrange(date) %>%
+                        group_by(camp.name, lat, long, yearmon, year, month, month2, season) %>%
                         dplyr::summarise(sample.dates = n(),
                         sum.occ.bff = sum(bff.presence, na.rm = T), 
                         sum.occ.ghff = sum(ghff.presence, na.rm = T),
@@ -246,8 +251,7 @@ camp_summaries_month = as.data.frame(qld_recent %>%
                         ffpresence = max(ff.presence),
                         bffpresence = max(bff.presence),
                         ghffpresence = max(ghff.presence),
-                        time.occ.chngs = sum(pres_change2, na.rm = T),
-                        max.ssn.btwn.samp = max(ssn_diff_lastsamp))) 
+                        time.occ.chngs = sum(pres_change2, na.rm = T))) 
 
 
 
@@ -258,37 +262,51 @@ camp_summaries_month$pres_atmn<- ifelse(camp_summaries_month$season == "autumn" 
 camp_summaries_month$pres_winter<- ifelse(camp_summaries_month$season == "winter" & camp_summaries_month$sum.occ.bff > 0, 1, 0 )
 
 #collapse rows to show binary seasonal presence
-camp_summaries_month$num_ssn_occ<- rowSums(camp_summaries_month[ ,c(25:28)])
-
-#make a dataframe with the roost and seasons and binary occupancy factors
-#binary_presencedf<- camp_summaries_month[,c(1:5, 22:26)]
+camp_summaries_month$num_ssn_occ<- rowSums(camp_summaries_month[ ,c(23:26)])
 
 ##take out the binary season columns 
-camp_summaries_month[,c(25:28)]<- NULL
+camp_summaries_month[,c(23:26)]<- NULL
 
-
-
-# #sum up the seasons occupied across all 60 
-camp_summaries_month<- camp_summaries_month %>%
-  group_by(camp.name) %>%
-  dplyr::mutate(total_ssns_occ= sum(bffpresence))
-
-#camp_summaries_month$time <- reorder.factor(camp_summaries_month$time, new.order=levels2) #manually set time levels
 
 
 ####merge 
 allmin3_sums<- merge(camp_summaries_month, ssns_min3, by = "camp.name", all.y = T)
 
-levels3<- c("summer", "autumn", "winter", "spring")
-allmin3_sums$season <- reorder.factor(allmin3_sums$season, new.order=levels3)
 
 #make abbrev month column for xaxis display consistent with all weather/climate data 
 # allmin3_sums$mon <-month.abb[allmin3_sums$month]
 levels<- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 # allmin3_sums$mon <- reorder.factor(allmin3_sums$mon, new.order=levels)
 
-allmin3_sums$yearmon= paste(allmin3_sums$year, sep = "-", allmin3_sums$month2 )
+#allmin3_sums$yearmon= paste(allmin3_sums$year, sep = "-", allmin3_sums$month2 )
 #allmin3_sums$yearmon2= paste(allmin3_sums$year, sep = " ", allmin3_sums$mon )
+
+
+
+#plot stop 
+eeid<- subset(allmin3_sums, yr_month < "Jan 2019")
+ggplot(eeid) +
+  geom_point(aes(x = as.factor(yr_month), y = bff.presence, color = season), size =0.65) +
+  theme_bw(base_size = 9) +
+  scale_y_continuous(breaks = c(0,1))+
+  scale_color_manual(values = c( "red", "orange", "blue", "forestgreen")) +
+  facet_wrap( facets = ~reorder(camp.name, -lat), drop = FALSE, ncol =9) +
+  # 
+  scale_x_discrete(drop = FALSE, labels = levels(eeid$yearmon)[c(T, rep(F, 1))],
+                   breaks = levels(eeid$yearmon)[c(T, rep(F, 1))])  +
+  #scale_x_discrete(drop = FALSE, breaks = month_fill$yr_month, labels = allmin3_sumst$yearmon2) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 85, vjust =0.90,  hjust=0.90 )) 
+
+ggsave("allroosts_allseason_bffoccupancy20072019.eps", plot = last_plot() , width= 25,  height =20 , units = c("in"), dpi = 300)
+
+
+
+
+
+
+
+
+
 
 
 
